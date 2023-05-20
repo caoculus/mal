@@ -20,37 +20,31 @@ fn tokenize(text: &str) -> impl Iterator<Item = ReadResult<Token<'_>>> {
 
     regex
         .captures_iter(text)
-        .map(|m| to_token(m.get(1).unwrap().as_str()))
+        .flat_map(|m| to_token(m.get(1).unwrap().as_str()))
 }
 
-fn to_token(s: &str) -> ReadResult<Token<'_>> {
+fn to_token(s: &str) -> Option<ReadResult<Token<'_>>> {
     use Pair::*;
     use Token::*;
 
     let token = match s {
-        "~@" => TildeAt,
         "[" => Left(Bracket),
         "]" => Right(Bracket),
         "{" => Left(Brace),
         "}" => Right(Brace),
         "(" => Left(Parenthesis),
         ")" => Right(Parenthesis),
-        "'" => Tick,
-        "`" => Backtick,
-        "~" => Tilde,
-        "^" => Caret,
-        "@" => At,
-        s if s.starts_with('"') => parse_string(s)
-            .map(Str)
-            .ok_or(ReadError::UnbalancedString)?,
-        // TODO: consider removing the semicolon?
-        s if s.starts_with(';') => Comment(s),
+        s if s.starts_with('"') => {
+            return Some(parse_string(s).map(Str).ok_or(ReadError::UnbalancedString))
+        }
+        s if s.starts_with(';') => return None,
         _ => Other(s),
     };
 
-    Ok(token)
+    Some(Ok(token))
 }
 
+// TODO: this needs more verification later
 fn parse_string(s: &str) -> Option<&str> {
     // obviously too short
     if s.len() < 2 {
@@ -69,16 +63,9 @@ fn parse_string(s: &str) -> Option<&str> {
 // TODO: make this no longer public
 #[derive(Debug)]
 pub enum Token<'a> {
-    TildeAt,
     Left(Pair),
     Right(Pair),
-    Tick,
-    Backtick,
-    Tilde,
-    Caret,
-    At,
     Str(&'a str),
-    Comment(&'a str),
     Other(&'a str),
 }
 
@@ -115,17 +102,50 @@ where
     }
 
     fn read_form<'b>(&'b mut self) -> ReadResult<MalType<'a>> {
+        use Pair::*;
         use Token::*;
 
-        match self.tokens.peek() {
-            Some(Ok(Right(_))) => Err(ReadError::Eof),
-            Some(&Ok(Left(pair))) => {
+        let Some(token) = self.tokens.peek() else { return Ok(MalType::Nil) };
+
+        match token {
+            Ok(Right(_)) => Err(ReadError::Eof),
+            &Ok(Left(pair)) => {
                 self.tokens.next();
                 self.read_list(pair)
                     .map(|list| MalType::List { pair, list })
             }
-            _ => self.read_atom().map(MalType::Atom),
+            Ok(token) => {
+                if let Token::Other(other) = token {
+                    if let Some(symbol) = Self::parse_macro(other) {
+                        self.tokens.next();
+
+                        let tail = self.read_form()?;
+                        return Ok(MalType::List {
+                            pair: Parenthesis,
+                            list: vec![MalType::Symbol(symbol), tail],
+                        });
+                    }
+                }
+
+                let res = Self::read_atom(token);
+                self.tokens.next();
+                Ok(res)
+            }
+            &Err(e) => Err(e),
         }
+    }
+
+    fn parse_macro(text: &'a str) -> Option<&'a str> {
+        let res = match text {
+            "'" => "quote",
+            "`" => "quasiquote",
+            "~" => "unquote",
+            "~@" => "splice-unquote",
+            "@" => "deref",
+            _ => return None,
+        };
+
+        Some(res)
     }
 
     fn read_list<'b>(&'b mut self, pair: Pair) -> ReadResult<Vec<MalType<'a>>> {
@@ -151,51 +171,25 @@ where
         Err(ReadError::Eof)
     }
 
-    fn read_atom<'b>(&'b mut self) -> ReadResult<MalAtom<'a>> {
-        let token = self.tokens.next().ok_or(ReadError::Eof)??;
-
-        let atom = match token {
-            Token::TildeAt => MalAtom::Symbol(Symbol::TildeAt),
-            Token::Tick => MalAtom::Symbol(Symbol::Tick),
-            Token::Backtick => MalAtom::Symbol(Symbol::Backtick),
-            Token::Tilde => MalAtom::Symbol(Symbol::Tilde),
-            Token::Caret => MalAtom::Symbol(Symbol::Caret),
-            Token::At => MalAtom::Symbol(Symbol::At),
-            Token::Str(s) => MalAtom::Symbol(Symbol::Str(s)),
-            Token::Comment(s) => MalAtom::Symbol(Symbol::Comment(s)),
-            Token::Other(s) => s
-                .parse()
-                .map(MalAtom::Number)
-                .unwrap_or(MalAtom::Symbol(Symbol::Other(s))),
+    fn read_atom(token: &Token<'a>) -> MalType<'a> {
+        match token {
+            Token::Str(s) => MalType::Str(s),
+            Token::Other(s) => s.parse().map(MalType::Number).unwrap_or(MalType::Symbol(s)),
             _ => unreachable!(),
-        };
-
-        Ok(atom)
+        }
     }
 }
 
 #[derive(Debug)]
 pub enum MalType<'a> {
-    Atom(MalAtom<'a>),
+    Nil,
+    Number(i64),
+    Str(&'a str),
+    Symbol(&'a str),
     List { pair: Pair, list: Vec<MalType<'a>> },
 }
 
-// TODO: divide this further
-#[derive(Debug)]
-pub enum MalAtom<'a> {
-    Number(i64),
-    Symbol(Symbol<'a>),
-}
-
-#[derive(Debug)]
-pub enum Symbol<'a> {
-    TildeAt,
-    Tick,
-    Backtick,
-    Tilde,
-    Caret,
-    At,
-    Str(&'a str),
-    Comment(&'a str),
-    Other(&'a str),
+#[test]
+fn feature() {
+    println!("{:#?}", read_str("'1"));
 }

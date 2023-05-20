@@ -2,7 +2,7 @@ use std::{borrow::Cow, iter};
 
 use itertools::Itertools;
 
-use crate::reader::{MalAtom, MalType, Pair, Symbol};
+use crate::reader::{MalType, Pair};
 
 pub fn pr_str(data: MalType<'_>) -> String {
     data.to_string()
@@ -11,7 +11,10 @@ pub fn pr_str(data: MalType<'_>) -> String {
 impl ToString for MalType<'_> {
     fn to_string(&self) -> String {
         match self {
-            MalType::Atom(a) => a.to_string(),
+            MalType::Nil => "nil".into(),
+            MalType::Number(n) => n.to_string(),
+            MalType::Str(s) => s.to_string(),
+            MalType::Symbol(s) => s.to_string(),
             MalType::List { pair, list } => iter::once(pair.left().into())
                 .chain(Itertools::intersperse(
                     list.iter().map(|token| Cow::Owned(token.to_string())),
@@ -37,31 +40,6 @@ impl Pair {
             Pair::Bracket => "]",
             Pair::Brace => "}",
             Pair::Parenthesis => ")",
-        }
-    }
-}
-
-impl ToString for MalAtom<'_> {
-    fn to_string(&self) -> String {
-        match self {
-            MalAtom::Number(n) => n.to_string(),
-            MalAtom::Symbol(s) => s.to_string(),
-        }
-    }
-}
-
-impl ToString for Symbol<'_> {
-    fn to_string(&self) -> String {
-        match self {
-            Symbol::TildeAt => "~@".into(),
-            Symbol::Tick => "'".into(),
-            Symbol::Backtick => "`".into(),
-            Symbol::Tilde => "~".into(),
-            Symbol::Caret => "^".into(),
-            Symbol::At => "@".into(),
-            Symbol::Str(s) => s.to_string(),
-            Symbol::Comment(s) => s.to_string(),
-            Symbol::Other(s) => s.to_string(),
         }
     }
 }
