@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::reader::MalType;
 
-pub fn pr_str(data: MalType) -> String {
+pub fn pr_str(data: &MalType) -> String {
     data.to_string()
 }
 

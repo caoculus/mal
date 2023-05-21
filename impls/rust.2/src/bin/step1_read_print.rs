@@ -14,9 +14,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let Some(Ok(line)) = lines.next() else { break };
 
-        let res = read_str(&line).map(pr_str);
-        match res {
-            Ok(o) => println!("{}", o),
+        match read_str(&line) {
+            Ok(res) => println!("{}", pr_str(&res)),
             Err(e) => println!("{}", e),
         }
     }

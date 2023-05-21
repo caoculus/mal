@@ -224,10 +224,3 @@ pub enum MalType {
     Vector(Vec<MalType>),
     Hashmap(HashMap<String, MalType>),
 }
-
-#[test]
-fn feature() {
-    use crate::printer::pr_str;
-
-    println!("{}", pr_str(read_str("{\"abc\" 1}").unwrap()));
-}
