@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use itertools::Itertools;
 
-use crate::reader::MalType;
+use crate::types::MalType;
 
 pub fn pr_str(data: &MalType) -> String {
     data.to_string()
@@ -18,10 +18,12 @@ impl ToString for MalType {
             MalType::List(l) => list_to_string(l.iter().map(|t| t.to_string().into()), "(", ")"),
             MalType::Vector(v) => list_to_string(v.iter().map(|t| t.to_string().into()), "[", "]"),
             MalType::Hashmap(h) => list_to_string(
-                h.iter().flat_map(|(k, v)| [k.into(), v.to_string().into()]),
+                h.iter()
+                    .flat_map(|(k, v)| [k.as_ref().into(), v.to_string().into()]),
                 "{",
                 "}",
             ),
+            MalType::Fn(_) => "function".into(), // no way to print this
         }
     }
 }

@@ -1,9 +1,11 @@
-use std::{collections::HashMap, iter::Peekable};
+use std::{collections::HashMap, iter::Peekable, rc::Rc};
 
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use regex::Regex;
 use thiserror::Error;
+
+use crate::types::MalType;
 
 type ReadResult<T> = Result<T, ReadError>;
 
@@ -126,7 +128,10 @@ where
                         self.tokens.next();
 
                         let tail = self.read_form()?;
-                        return Ok(MalType::List(vec![MalType::Symbol(symbol.into()), tail]));
+                        return Ok(MalType::List(Rc::new(vec![
+                            MalType::Symbol(symbol.into()),
+                            tail,
+                        ])));
                     }
                 }
 
@@ -155,13 +160,13 @@ where
                         Ok((k, v))
                     })
                     .collect::<ReadResult<HashMap<_, _>>>()
-                    .map(MalType::Hashmap)
+                    .map(|h| MalType::Hashmap(Rc::new(h)))
             }
-            Pair::Bracket => Ok(MalType::Vector(list)),
+            Pair::Bracket => Ok(MalType::Vector(Rc::new(list))),
             Pair::Parenthesis => Ok(if list.is_empty() {
                 MalType::Nil
             } else {
-                MalType::List(list)
+                MalType::List(Rc::new(list))
             }),
         }
     }
@@ -204,23 +209,12 @@ where
 
     fn read_atom(token: &Token<'a>) -> MalType {
         match token {
-            Token::String(s) => MalType::String(s.to_string()),
+            Token::String(s) => MalType::String(Rc::from(*s)),
             Token::Other(s) => s
                 .parse()
                 .map(MalType::Number)
-                .unwrap_or(MalType::Symbol(s.to_string())),
+                .unwrap_or(MalType::Symbol(Rc::from(*s))),
             _ => unreachable!(),
         }
     }
-}
-
-#[derive(Debug)]
-pub enum MalType {
-    Nil,
-    Number(i64),
-    String(String),
-    Symbol(String),
-    List(Vec<MalType>),
-    Vector(Vec<MalType>),
-    Hashmap(HashMap<String, MalType>),
 }

@@ -1,18 +1,20 @@
 use std::{
     collections::HashMap,
     io::{stdin, stdout, Write},
+    rc::Rc,
 };
 
 use mal::{
-    eval::{eval, EvalError, MalFn},
+    eval::{eval, EvalError},
     printer::pr_str,
-    reader::{read_str, MalType},
+    reader::read_str,
+    types::MalType,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut lines = stdin().lines();
 
-    let repl_env: HashMap<String, MalFn> = HashMap::from([
+    let repl_env: HashMap<Rc<str>, MalType> = HashMap::from([
         ("+".into(), to_mal_fn(|a, b| a + b)),
         ("-".into(), to_mal_fn(|a, b| a - b)),
         ("*".into(), to_mal_fn(|a, b| a * b)),
@@ -45,18 +47,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn to_mal_fn(f: impl Fn(i64, i64) -> i64 + 'static) -> MalFn {
-    Box::new(move |args| {
-        if args.len() != 3 {
+fn to_mal_fn(f: impl Fn(i64, i64) -> i64 + 'static) -> MalType {
+    MalType::Fn(Rc::new(move |args| {
+        let [a, b] = args else {
             return Err(EvalError::WrongArgCount);
-        }
-        let (MalType::Number(a), MalType::Number(b)) = ({
-            let mut iter = args.into_iter().skip(1);
-            (iter.next().unwrap(), iter.next().unwrap())
-        }) else {
+        };
+
+        let (&MalType::Number(a), &MalType::Number(b)) = (a, b) else {
             return Err(EvalError::WrongArgType);
         };
 
         Ok(MalType::Number(f(a, b)))
-    })
+    }))
 }
