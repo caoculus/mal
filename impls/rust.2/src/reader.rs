@@ -3,18 +3,15 @@ use std::{collections::HashMap, iter::Peekable, rc::Rc};
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use regex::Regex;
-use thiserror::Error;
 
-use crate::types::{MalType, KEYWORD_PREFIX};
+use crate::types::{MalError, MalResult, MalType, KEYWORD_PREFIX};
 
-type ReadResult<T> = Result<T, ReadError>;
-
-pub fn read_str(text: &str) -> ReadResult<MalType> {
+pub fn read_str(text: &str) -> MalResult<MalType> {
     let mut reader = Reader::new(tokenize(text));
     reader.read_form()
 }
 
-fn tokenize(text: &str) -> impl Iterator<Item = ReadResult<Token<'_>>> {
+fn tokenize(text: &str) -> impl Iterator<Item = MalResult<Token<'_>>> {
     static REGEX: OnceCell<Regex> = OnceCell::new();
     let regex = REGEX.get_or_init(|| {
         Regex::new(r#"[\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)"#)
@@ -26,7 +23,7 @@ fn tokenize(text: &str) -> impl Iterator<Item = ReadResult<Token<'_>>> {
         .flat_map(|m| to_token(m.get(1).unwrap().as_str()))
 }
 
-fn to_token(s: &str) -> Option<ReadResult<Token<'_>>> {
+fn to_token(s: &str) -> Option<MalResult<Token<'_>>> {
     use Pair::*;
     use Token::*;
 
@@ -41,7 +38,7 @@ fn to_token(s: &str) -> Option<ReadResult<Token<'_>>> {
             return Some(
                 parse_string(s)
                     .map(String)
-                    .ok_or(ReadError::UnbalancedString),
+                    .ok_or(MalError::UnbalancedString),
             )
         }
         s if s.starts_with(':') => String(to_keyword(s)),
@@ -111,15 +108,15 @@ pub enum Pair {
     Parenthesis,
 }
 
-#[derive(Debug, Error, Clone, Copy)]
-pub enum ReadError {
-    #[error("unbalanced")]
-    UnbalancedString,
-    #[error("EOF")]
-    Eof,
-    #[error("invalid hashmap")]
-    InvalidHashmap,
-}
+// #[derive(Debug, Error, Clone, Copy)]
+// pub enum MalError {
+//     #[error("unbalanced")]
+//     UnbalancedString,
+//     #[error("EOF")]
+//     Eof,
+//     #[error("invalid hashmap")]
+//     InvalidHashmap,
+// }
 
 struct Reader<I>
 where
@@ -130,7 +127,7 @@ where
 
 impl<'a, I> Reader<I>
 where
-    I: Iterator<Item = ReadResult<Token<'a>>>,
+    I: Iterator<Item = MalResult<Token<'a>>>,
 {
     fn new(tokens: I) -> Self {
         Self {
@@ -138,11 +135,11 @@ where
         }
     }
 
-    fn read_form(&mut self) -> ReadResult<MalType> {
+    fn read_form(&mut self) -> MalResult<MalType> {
         let Some(token) = self.tokens.peek() else { return Ok(MalType::Nil) };
 
         match token {
-            Ok(Token::Right(_)) => Err(ReadError::Eof),
+            Ok(Token::Right(_)) => Err(MalError::Eof),
             &Ok(Token::Left(pair)) => {
                 self.tokens.next();
                 let list = self.read_list(pair)?;
@@ -166,27 +163,27 @@ where
                 self.tokens.next();
                 Ok(res)
             }
-            &Err(e) => Err(e),
+            Err(e) => Err(e.clone()),
         }
     }
 
-    fn parse_list(list: Vec<MalType>, pair: Pair) -> ReadResult<MalType> {
+    fn parse_list(list: Vec<MalType>, pair: Pair) -> MalResult<MalType> {
         match pair {
             Pair::Brace => {
                 if list.len() % 2 != 0 {
-                    return Err(ReadError::InvalidHashmap);
+                    return Err(MalError::InvalidHashmap);
                 }
 
                 list.into_iter()
                     .tuples()
                     .map(|(k, v)| {
                         let MalType::String(k) = k else {
-                            return Err(ReadError::InvalidHashmap);
+                            return Err(MalError::InvalidHashmap);
                         };
 
                         Ok((k, v))
                     })
-                    .collect::<ReadResult<HashMap<_, _>>>()
+                    .collect::<MalResult<HashMap<_, _>>>()
                     .map(|h| MalType::Hashmap(Rc::new(h)))
             }
             Pair::Bracket => Ok(MalType::Vector(Rc::new(list))),
@@ -207,7 +204,7 @@ where
         Some(res)
     }
 
-    fn read_list(&mut self, pair: Pair) -> ReadResult<Vec<MalType>> {
+    fn read_list(&mut self, pair: Pair) -> MalResult<Vec<MalType>> {
         use Token::*;
 
         let mut list = vec![];
@@ -216,18 +213,18 @@ where
             match token {
                 &Ok(Right(other)) => {
                     if pair != other {
-                        return Err(ReadError::Eof);
+                        return Err(MalError::Eof);
                     }
 
                     self.tokens.next();
                     return Ok(list);
                 }
                 Ok(_) => list.push(self.read_form()?),
-                Err(e) => return Err(*e),
+                Err(e) => return Err(e.clone()),
             }
         }
 
-        Err(ReadError::Eof)
+        Err(MalError::Eof)
     }
 
     fn read_atom(token: &Token<'a>) -> MalType {

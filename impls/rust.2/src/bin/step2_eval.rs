@@ -1,10 +1,9 @@
 use std::{collections::HashMap, rc::Rc};
 
 use mal::{
-    eval::{EvalError, EvalResult},
     printer::{pr_str, PrintMode},
     reader::read_str,
-    types::MalType,
+    types::{MalError, MalResult, MalType},
 };
 use rustyline::{error::ReadlineError, DefaultEditor};
 
@@ -22,19 +21,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match rl.readline("user> ") {
             Ok(line) => {
                 rl.add_history_entry(&line)?;
-                let ast = match read_str(&line) {
-                    Ok(ast) => {
-                        println!("{}", pr_str(&ast, PrintMode::Readable));
-                        ast
-                    }
-                    Err(e) => {
-                        println!("{}", e);
-                        continue;
-                    }
-                };
-
-                match eval(ast, &repl_env) {
-                    Ok(res) => println!("{}", pr_str(&res, PrintMode::Readable)),
+                match rep(&line, &repl_env) {
+                    Ok(res) => println!("{}", res),
                     Err(e) => println!("{}", e),
                 };
             }
@@ -59,24 +47,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn to_mal_fn(f: impl Fn(i64, i64) -> i64 + 'static) -> MalType {
     MalType::Fn(Rc::new(move |args| {
         let &[MalType::Number(a), MalType::Number(b)] = args else {
-            return Err(EvalError::WrongArgs);
+            return Err(MalError::WrongArgs);
         };
 
         Ok(MalType::Number(f(a, b)))
     }))
 }
 
+fn rep(line: &str, repl_env: &HashMap<Rc<str>, MalType>) -> MalResult<String> {
+    let ast = read_str(line)?;
+    let res = eval(ast, repl_env)?;
+    Ok(pr_str(&res, PrintMode::Readable))
+}
+
 // this is kept separate because eval is different later
-fn eval(ast: MalType, repl_env: &HashMap<Rc<str>, MalType>) -> EvalResult<MalType> {
+fn eval(ast: MalType, repl_env: &HashMap<Rc<str>, MalType>) -> MalResult<MalType> {
     match ast {
-        MalType::List(_) => {
+        MalType::List(ref list) => {
+            // empty list is ignored
+            if list.is_empty() {
+                return Ok(ast);
+            }
+
             // re-evaluate
             let MalType::List(list) = eval_ast(ast, repl_env)? else {
                 unreachable!("eval_ast should return a list")
             };
 
             let Some(MalType::Fn(f)) = list.first() else {
-                return Err(EvalError::InvalidHead);
+                return Err(MalError::InvalidHead);
             };
 
             f(&list[1..])
@@ -85,29 +84,29 @@ fn eval(ast: MalType, repl_env: &HashMap<Rc<str>, MalType>) -> EvalResult<MalTyp
     }
 }
 
-fn eval_ast(ast: MalType, repl_env: &HashMap<Rc<str>, MalType>) -> EvalResult<MalType> {
+fn eval_ast(ast: MalType, repl_env: &HashMap<Rc<str>, MalType>) -> MalResult<MalType> {
     match ast {
         MalType::Symbol(s) => repl_env
             .get(&s)
             .cloned()
-            .ok_or_else(|| EvalError::NotFound(s.clone())),
+            .ok_or_else(|| MalError::NotFound(s.clone())),
         MalType::List(l) => Ok(MalType::List(Rc::new(
             l.iter()
                 .cloned()
                 .map(|t| eval(t, repl_env))
-                .collect::<EvalResult<Vec<_>>>()?,
+                .collect::<MalResult<Vec<_>>>()?,
         ))),
         MalType::Vector(v) => Ok(MalType::Vector(Rc::new(
             v.iter()
                 .cloned()
                 .map(|t| eval(t, repl_env))
-                .collect::<EvalResult<Vec<_>>>()?,
+                .collect::<MalResult<Vec<_>>>()?,
         ))),
         MalType::Hashmap(h) => Ok(MalType::Hashmap(Rc::new(
             h.iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .map(|(k, v)| eval(v, repl_env).map(|v| (k, v)))
-                .collect::<EvalResult<HashMap<_, _>>>()?,
+                .collect::<MalResult<HashMap<_, _>>>()?,
         ))),
         val => Ok(val),
     }

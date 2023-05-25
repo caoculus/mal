@@ -1,9 +1,13 @@
 use itertools::Itertools;
-use mal::{eval::EvalResult, printer::PrintMode};
 use rustyline::{error::ReadlineError, DefaultEditor};
 use std::{collections::HashMap, rc::Rc};
 
-use mal::{env::Env, eval::EvalError, printer::pr_str, reader::read_str, types::MalType};
+use mal::{
+    env::Env,
+    printer::{pr_str, PrintMode},
+    reader::read_str,
+    types::{MalError, MalResult, MalType},
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repl_env = base_env();
@@ -14,19 +18,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match rl.readline("user> ") {
             Ok(line) => {
                 rl.add_history_entry(&line)?;
-                let ast = match read_str(&line) {
-                    Ok(ast) => {
-                        println!("{}", pr_str(&ast, PrintMode::Readable));
-                        ast
-                    }
-                    Err(e) => {
-                        println!("{}", e);
-                        continue;
-                    }
-                };
-
-                match eval(ast, &repl_env) {
-                    Ok(res) => println!("{}", pr_str(&res, PrintMode::Readable)),
+                match rep(&line, &repl_env) {
+                    Ok(res) => println!("{}", res),
                     Err(e) => println!("{}", e),
                 };
             }
@@ -48,39 +41,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn rep(line: &str, repl_env: &Env) -> MalResult<String> {
+    let ast = read_str(line)?;
+    let res = eval(ast, repl_env)?;
+    Ok(pr_str(&res, PrintMode::Readable))
+}
+
 fn base_env() -> Env {
-    let env = Env::new();
-
-    env.set("+".into(), to_mal_fn(|a, b| a + b));
-    env.set("-".into(), to_mal_fn(|a, b| a - b));
-    env.set("*".into(), to_mal_fn(|a, b| a * b));
-    env.set("/".into(), to_mal_fn(|a, b| a / b));
-
-    env
+    Env::with_binds(
+        mal::core::ns()
+            .into_iter()
+            .map(|(k, v)| (k.into(), MalType::Fn(v))),
+    )
 }
 
-fn to_mal_fn(f: impl Fn(i64, i64) -> i64 + 'static) -> MalType {
-    MalType::Fn(Rc::new(move |args| {
-        let &[MalType::Number(a), MalType::Number(b)] = args else {
-            return Err(EvalError::WrongArgs);
-        };
-
-        Ok(MalType::Number(f(a, b)))
-    }))
-}
-
-fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
+fn eval(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
     match ast {
-        MalType::List(list) => {
+        MalType::List(ref list) => {
             // empty list case
             let Some(head) = list.first() else {
-                return Ok(MalType::List(list));
+                return Ok(ast);
             };
 
             match head {
                 MalType::Symbol(s) if s.as_ref() == "def!" => {
                     let [_, MalType::Symbol(name), expr] = list.as_slice() else {
-                        return Err(EvalError::WrongArgs);
+                        return Err(MalError::WrongArgs);
                     };
 
                     let value = eval(expr.clone(), repl_env)?;
@@ -90,29 +76,26 @@ fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
                 }
                 MalType::Symbol(s) if s.as_ref() == "let*" => {
                     let [_, MalType::List(bindings) | MalType::Vector(bindings), expr] = list.as_slice() else {
-                        return Err(EvalError::WrongArgs);
+                        return Err(MalError::WrongArgs);
                     };
 
                     if bindings.len() % 2 != 0 {
-                        return Err(EvalError::WrongArgs);
+                        return Err(MalError::WrongArgs);
                     }
 
-                    let mut prev = repl_env.clone();
+                    let new_env = Env::with_outer(repl_env.clone());
 
                     for (name, expr) in bindings.iter().tuples() {
                         let MalType::Symbol(name) = name else {
-                            return Err(EvalError::WrongArgs);
+                            return Err(MalError::WrongArgs);
                         };
 
-                        let value = eval(expr.clone(), &prev)?;
-                        let new_env = Env::with_outer(prev);
+                        let value = eval(expr.clone(), &new_env)?;
 
                         new_env.set(name.clone(), value);
-
-                        prev = new_env;
                     }
 
-                    eval(expr.clone(), &prev)
+                    eval(expr.clone(), &new_env)
                 }
                 MalType::Symbol(s) if s.as_ref() == "do" => {
                     let mut res = None;
@@ -122,33 +105,21 @@ fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
                     }
 
                     // tail must have at least one element
-                    res.ok_or(EvalError::WrongArgs)
+                    res.ok_or(MalError::WrongArgs)
                 }
-                MalType::Symbol(s) if s.as_ref() == "if" => {
-                    let [_, cond, t_branch, f_branch] = list.as_slice() else {
-                                return Err(EvalError::WrongArgs);
-                            };
-
-                    let cond_res = eval(cond.clone(), repl_env)?;
-
-                    if cond_res.into() {
-                        eval(t_branch.clone(), repl_env)
-                    } else {
-                        eval(f_branch.clone(), repl_env)
-                    }
-                }
+                MalType::Symbol(s) if s.as_ref() == "if" => eval_if(list, repl_env),
                 MalType::Symbol(s) if s.as_ref() == "fn*" => {
                     let [_, MalType::List(binds), body] = list.as_slice() else {
-                                return Err(EvalError::WrongArgs);
+                                return Err(MalError::WrongArgs);
                             };
 
                     let binds = binds
                         .iter()
                         .map(|v| match v {
                             MalType::Symbol(s) => Ok(s.clone()),
-                            _ => Err(EvalError::WrongArgs),
+                            _ => Err(MalError::WrongArgs),
                         })
-                        .collect::<EvalResult<Vec<Rc<str>>>>()?;
+                        .collect::<MalResult<Vec<Rc<str>>>>()?;
                     let body = body.clone();
                     let outer = repl_env.clone();
 
@@ -156,7 +127,7 @@ fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
                     // multiple times
                     Ok(MalType::Fn(Rc::new(move |args| {
                         if binds.len() != args.len() {
-                            return Err(EvalError::WrongArgs);
+                            return Err(MalError::WrongArgs);
                         }
 
                         let env = Env::with_outer_and_binds(
@@ -177,7 +148,7 @@ fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
 
                     match head {
                         MalType::Fn(f) => f(&list[1..]),
-                        _ => Err(EvalError::InvalidHead),
+                        _ => Err(MalError::InvalidHead),
                     }
                 }
             }
@@ -186,28 +157,46 @@ fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
     }
 }
 
-fn eval_ast(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
+fn eval_if(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
+    // if branch is allowed to skip its false branch
+    // in which case, the false branch is simply nil
+    let (cond, t_branch, f_branch) = match list {
+        [_, cond, t_branch] => (cond, t_branch, &MalType::Nil),
+        [_, cond, t_branch, f_branch] => (cond, t_branch, f_branch),
+        _ => return Err(MalError::WrongArgs),
+    };
+
+    let cond_res = eval(cond.clone(), repl_env)?;
+
+    if cond_res.into() {
+        eval(t_branch.clone(), repl_env)
+    } else {
+        eval(f_branch.clone(), repl_env)
+    }
+}
+
+fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
     match ast {
         MalType::Symbol(s) => repl_env
             .get(&s)
-            .ok_or_else(|| EvalError::NotFound(s.clone())),
+            .ok_or_else(|| MalError::NotFound(s.clone())),
         MalType::List(l) => Ok(MalType::List(Rc::new(
             l.iter()
                 .cloned()
                 .map(|t| eval(t, repl_env))
-                .collect::<EvalResult<Vec<_>>>()?,
+                .collect::<MalResult<Vec<_>>>()?,
         ))),
         MalType::Vector(v) => Ok(MalType::Vector(Rc::new(
             v.iter()
                 .cloned()
                 .map(|t| eval(t, repl_env))
-                .collect::<EvalResult<Vec<_>>>()?,
+                .collect::<MalResult<Vec<_>>>()?,
         ))),
         MalType::Hashmap(h) => Ok(MalType::Hashmap(Rc::new(
             h.iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .map(|(k, v)| eval(v, repl_env).map(|v| (k, v)))
-                .collect::<EvalResult<HashMap<_, _>>>()?,
+                .collect::<MalResult<HashMap<_, _>>>()?,
         ))),
         val => Ok(val),
     }

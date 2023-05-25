@@ -1,9 +1,13 @@
 use itertools::Itertools;
-use mal::{eval::EvalResult, printer::PrintMode};
 use rustyline::{error::ReadlineError, DefaultEditor};
 use std::{collections::HashMap, rc::Rc};
 
-use mal::{env::Env, eval::EvalError, printer::pr_str, reader::read_str, types::MalType};
+use mal::{
+    env::Env,
+    printer::{pr_str, PrintMode},
+    reader::read_str,
+    types::{MalError, MalResult, MalType},
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repl_env = base_env();
@@ -14,19 +18,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match rl.readline("user> ") {
             Ok(line) => {
                 rl.add_history_entry(&line)?;
-                let ast = match read_str(&line) {
-                    Ok(ast) => {
-                        println!("{}", pr_str(&ast, PrintMode::Readable));
-                        ast
-                    }
-                    Err(e) => {
-                        println!("{}", e);
-                        continue;
-                    }
-                };
-
-                match eval(ast, &repl_env) {
-                    Ok(res) => println!("{}", pr_str(&res, PrintMode::Readable)),
+                match rep(&line, &repl_env) {
+                    Ok(res) => println!("{}", res),
                     Err(e) => println!("{}", e),
                 };
             }
@@ -48,6 +41,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn rep(line: &str, repl_env: &Env) -> MalResult<String> {
+    let ast = read_str(line)?;
+    let res = eval(ast, repl_env)?;
+    Ok(pr_str(&res, PrintMode::Readable))
+}
+
 fn base_env() -> Env {
     let env = Env::new();
 
@@ -62,25 +61,25 @@ fn base_env() -> Env {
 fn to_mal_fn(f: impl Fn(i64, i64) -> i64 + 'static) -> MalType {
     MalType::Fn(Rc::new(move |args| {
         let &[MalType::Number(a), MalType::Number(b)] = args else {
-            return Err(EvalError::WrongArgs);
+            return Err(MalError::WrongArgs);
         };
 
         Ok(MalType::Number(f(a, b)))
     }))
 }
 
-fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
+fn eval(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
     match ast {
-        MalType::List(list) => {
+        MalType::List(ref list) => {
             // empty list case
             let Some(head) = list.first() else {
-                return Ok(MalType::List(list));
+                return Ok(ast);
             };
 
             match head {
                 MalType::Symbol(s) if s.as_ref() == "def!" => {
                     let [_, MalType::Symbol(name), expr] = list.as_slice() else {
-                        return Err(EvalError::WrongArgs);
+                        return Err(MalError::WrongArgs);
                     };
 
                     let value = eval(expr.clone(), repl_env)?;
@@ -90,29 +89,26 @@ fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
                 }
                 MalType::Symbol(s) if s.as_ref() == "let*" => {
                     let [_, MalType::List(bindings) | MalType::Vector(bindings), expr] = list.as_slice() else {
-                        return Err(EvalError::WrongArgs);
+                        return Err(MalError::WrongArgs);
                     };
 
                     if bindings.len() % 2 != 0 {
-                        return Err(EvalError::WrongArgs);
+                        return Err(MalError::WrongArgs);
                     }
 
-                    let mut prev = repl_env.clone();
+                    let new_env = Env::with_outer(repl_env.clone());
 
                     for (name, expr) in bindings.iter().tuples() {
                         let MalType::Symbol(name) = name else {
-                            return Err(EvalError::WrongArgs);
+                            return Err(MalError::WrongArgs);
                         };
 
-                        let value = eval(expr.clone(), &prev)?;
-                        let new_env = Env::with_outer(prev);
+                        let value = eval(expr.clone(), &new_env)?;
 
                         new_env.set(name.clone(), value);
-
-                        prev = new_env;
                     }
 
-                    eval(expr.clone(), &prev)
+                    eval(expr.clone(), &new_env)
                 }
                 _ => {
                     // re-evaluate
@@ -121,7 +117,7 @@ fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
                     };
 
                     let MalType::Fn(f) = list.first().expect("list should not be empty") else {
-                        return Err(EvalError::InvalidHead);
+                        return Err(MalError::InvalidHead);
                     };
 
                     f(&list[1..])
@@ -132,28 +128,28 @@ fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
     }
 }
 
-fn eval_ast(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
+fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
     match ast {
         MalType::Symbol(s) => repl_env
             .get(&s)
-            .ok_or_else(|| EvalError::NotFound(s.clone())),
+            .ok_or_else(|| MalError::NotFound(s.clone())),
         MalType::List(l) => Ok(MalType::List(Rc::new(
             l.iter()
                 .cloned()
                 .map(|t| eval(t, repl_env))
-                .collect::<EvalResult<Vec<_>>>()?,
+                .collect::<MalResult<Vec<_>>>()?,
         ))),
         MalType::Vector(v) => Ok(MalType::Vector(Rc::new(
             v.iter()
                 .cloned()
                 .map(|t| eval(t, repl_env))
-                .collect::<EvalResult<Vec<_>>>()?,
+                .collect::<MalResult<Vec<_>>>()?,
         ))),
         MalType::Hashmap(h) => Ok(MalType::Hashmap(Rc::new(
             h.iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .map(|(k, v)| eval(v, repl_env).map(|v| (k, v)))
-                .collect::<EvalResult<HashMap<_, _>>>()?,
+                .collect::<MalResult<HashMap<_, _>>>()?,
         ))),
         val => Ok(val),
     }
