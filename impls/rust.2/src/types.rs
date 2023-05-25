@@ -50,14 +50,15 @@ impl From<MalType> for bool {
 
 impl PartialEq for MalType {
     fn eq(&self, other: &Self) -> bool {
+        // tests ask that lists and vectors be equal
+
         match (self, other) {
             (Self::Nil, Self::Nil) => true,
             (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
             (Self::Number(l0), Self::Number(r0)) => l0 == r0,
             (Self::String(l0), Self::String(r0)) => l0 == r0,
             (Self::Symbol(l0), Self::Symbol(r0)) => l0 == r0,
-            (Self::List(l0), Self::List(r0)) => l0 == r0,
-            (Self::Vector(l0), Self::Vector(r0)) => l0 == r0,
+            (Self::List(l0) | Self::Vector(l0), Self::List(r0) | Self::Vector(r0)) => l0 == r0,
             (Self::Hashmap(l0), Self::Hashmap(r0)) => l0 == r0,
             _ => false,
         }

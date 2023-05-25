@@ -12,6 +12,10 @@ use mal::{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repl_env = base_env();
 
+    // defining the not function
+    rep("(def! not (fn* (a) (if a false true)))", &repl_env)
+        .expect("Failed to define `not` function");
+
     let mut rl = DefaultEditor::new()?;
 
     loop {
@@ -48,10 +52,12 @@ fn rep(line: &str, repl_env: &Env) -> MalResult<String> {
 }
 
 fn base_env() -> Env {
-    Env::with_binds(
+    Env::new(
+        None,
         mal::core::ns()
             .into_iter()
-            .map(|(k, v)| (k.into(), MalType::Fn(v))),
+            .map(|(k, v)| (k.into(), MalType::Fn(v)))
+            .collect(),
     )
 }
 
@@ -64,97 +70,51 @@ fn eval(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
             };
 
             match head {
-                MalType::Symbol(s) if s.as_ref() == "def!" => {
-                    let [_, MalType::Symbol(name), expr] = list.as_slice() else {
-                        return Err(MalError::WrongArgs);
-                    };
-
-                    let value = eval(expr.clone(), repl_env)?;
-                    repl_env.set(name.clone(), value.clone());
-
-                    Ok(value)
-                }
-                MalType::Symbol(s) if s.as_ref() == "let*" => {
-                    let [_, MalType::List(bindings) | MalType::Vector(bindings), expr] = list.as_slice() else {
-                        return Err(MalError::WrongArgs);
-                    };
-
-                    if bindings.len() % 2 != 0 {
-                        return Err(MalError::WrongArgs);
-                    }
-
-                    let new_env = Env::with_outer(repl_env.clone());
-
-                    for (name, expr) in bindings.iter().tuples() {
-                        let MalType::Symbol(name) = name else {
-                            return Err(MalError::WrongArgs);
-                        };
-
-                        let value = eval(expr.clone(), &new_env)?;
-
-                        new_env.set(name.clone(), value);
-                    }
-
-                    eval(expr.clone(), &new_env)
-                }
-                MalType::Symbol(s) if s.as_ref() == "do" => {
-                    let mut res = None;
-
-                    for val in list.iter().skip(1).cloned() {
-                        res = Some(eval(val, repl_env)?);
-                    }
-
-                    // tail must have at least one element
-                    res.ok_or(MalError::WrongArgs)
-                }
+                MalType::Symbol(s) if s.as_ref() == "def!" => eval_def(list, repl_env),
+                MalType::Symbol(s) if s.as_ref() == "let*" => eval_let(list, repl_env),
+                MalType::Symbol(s) if s.as_ref() == "do" => eval_do(list, repl_env),
                 MalType::Symbol(s) if s.as_ref() == "if" => eval_if(list, repl_env),
-                MalType::Symbol(s) if s.as_ref() == "fn*" => {
-                    let [_, MalType::List(binds), body] = list.as_slice() else {
-                                return Err(MalError::WrongArgs);
-                            };
-
-                    let binds = binds
-                        .iter()
-                        .map(|v| match v {
-                            MalType::Symbol(s) => Ok(s.clone()),
-                            _ => Err(MalError::WrongArgs),
-                        })
-                        .collect::<MalResult<Vec<Rc<str>>>>()?;
-                    let body = body.clone();
-                    let outer = repl_env.clone();
-
-                    // a lot of cloning happening, because the function can get called
-                    // multiple times
-                    Ok(MalType::Fn(Rc::new(move |args| {
-                        if binds.len() != args.len() {
-                            return Err(MalError::WrongArgs);
-                        }
-
-                        let env = Env::with_outer_and_binds(
-                            outer.clone(),
-                            binds.iter().cloned().zip(args.iter().cloned()),
-                        );
-
-                        eval(body.clone(), &env)
-                    })))
-                }
-                _ => {
-                    // re-evaluate
-                    let MalType::List(list) = eval_ast(MalType::List(list.clone()), repl_env)? else {
-                        unreachable!("eval_ast should return a list")
-                    };
-
-                    let head = list.first().expect("list should not be empty");
-
-                    match head {
-                        MalType::Fn(f) => f(&list[1..]),
-                        _ => Err(MalError::InvalidHead),
-                    }
-                }
+                MalType::Symbol(s) if s.as_ref() == "fn*" => eval_fn(list, repl_env),
+                _ => eval_list(list, repl_env),
             }
         }
         ast => eval_ast(ast, repl_env),
     }
+}
+
+fn eval_def(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
+    let [_, MalType::Symbol(name), expr] = list else {
+        return Err(MalError::WrongArgs);
+    };
+
+    let value = eval(expr.clone(), repl_env)?;
+    repl_env.set(name.clone(), value.clone());
+
+    Ok(value)
+}
+
+fn eval_let(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
+    let [_, MalType::List(bindings) | MalType::Vector(bindings), expr] = list else {
+        return Err(MalError::WrongArgs);
+    };
+
+    if bindings.len() % 2 != 0 {
+        return Err(MalError::WrongArgs);
+    }
+
+    let new_env = Env::new(Some(repl_env.clone()), HashMap::new());
+
+    for (name, expr) in bindings.iter().tuples() {
+        let MalType::Symbol(name) = name else {
+            return Err(MalError::WrongArgs);
+        };
+
+        let value = eval(expr.clone(), &new_env)?;
+
+        new_env.set(name.clone(), value);
+    }
+
+    eval(expr.clone(), &new_env)
 }
 
 fn eval_if(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
@@ -172,6 +132,109 @@ fn eval_if(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
         eval(t_branch.clone(), repl_env)
     } else {
         eval(f_branch.clone(), repl_env)
+    }
+}
+
+fn eval_do(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
+    let mut res = None;
+
+    for val in list.iter().skip(1).cloned() {
+        res = Some(eval(val, repl_env)?);
+    }
+
+    // tail must have at least one element
+    res.ok_or(MalError::WrongArgs)
+}
+
+fn eval_fn(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
+    let [_, MalType::List(binds) | MalType::Vector(binds), body] = list else {
+        return Err(MalError::WrongArgs);
+    };
+
+    let Bindings { names, variadic } = parse_binds(binds)?;
+    let body = body.clone();
+    let outer = repl_env.clone();
+
+    // a lot of cloning happening, because the function can get called
+    // multiple times
+    Ok(MalType::Fn(Rc::new(move |args| {
+        let binds = match &variadic {
+            Some(variadic) => {
+                if args.len() < names.len() {
+                    return Err(MalError::WrongArgs);
+                }
+
+                let var_list = MalType::List(Rc::new(args[names.len()..].to_vec()));
+                names
+                    .iter()
+                    .cloned()
+                    .zip(args.iter().cloned())
+                    .chain(std::iter::once((variadic.clone(), var_list)))
+                    .collect()
+            }
+            None => {
+                if args.len() != names.len() {
+                    return Err(MalError::WrongArgs);
+                }
+
+                names.iter().cloned().zip(args.iter().cloned()).collect()
+            }
+        };
+
+        let env = Env::new(Some(outer.clone()), binds);
+        eval(body.clone(), &env)
+    })))
+}
+
+fn parse_binds(binds: &[MalType]) -> MalResult<Bindings> {
+    let mut names = vec![];
+    let mut variadic = None;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Named,
+        VarStart,
+        Done,
+    }
+
+    let mut state = State::Named;
+
+    for t in binds {
+        let MalType::Symbol(name) = t else {
+            return Err(MalError::WrongArgs);
+        };
+
+        match (state, name.as_ref()) {
+            (State::Named, "&") => state = State::VarStart,
+            (State::Named, _) => names.push(name.clone()),
+            (State::VarStart, n) if n != "&" => {
+                variadic = Some(name.clone());
+                state = State::Done;
+            }
+            _ => return Err(MalError::WrongArgs),
+        }
+    }
+
+    (state != State::VarStart)
+        .then_some(Bindings { names, variadic })
+        .ok_or(MalError::WrongArgs)
+}
+
+struct Bindings {
+    names: Vec<Rc<str>>,
+    variadic: Option<Rc<str>>,
+}
+
+fn eval_list(list: &Rc<Vec<MalType>>, repl_env: &Env) -> MalResult<MalType> {
+    let MalType::List(list) = eval_ast(MalType::List(list.clone()), repl_env)? else {
+        unreachable!("eval_ast should return a list")
+    };
+
+    let head = list.first().expect("list should not be empty");
+
+    match head {
+        MalType::Fn(f) => f(&list[1..]),
+        _ => Err(MalError::InvalidHead),
     }
 }
 
@@ -200,4 +263,9 @@ fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
         ))),
         val => Ok(val),
     }
+}
+
+#[test]
+fn test() {
+    rep("( (fn* (& more) (count more)) 1 2 3)", &base_env()).unwrap();
 }

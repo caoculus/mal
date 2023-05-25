@@ -11,35 +11,10 @@ struct EnvInner {
 }
 
 impl Env {
-    // TODO: move these constructors to builder pattern
-    pub fn new() -> Self {
+    pub fn new(outer: Option<Env>, bindings: HashMap<Rc<str>, MalType>) -> Self {
         Self(Rc::new(EnvInner {
-            bindings: RefCell::new(HashMap::new()),
-            outer: None,
-        }))
-    }
-
-    pub fn with_outer(outer: Env) -> Self {
-        Self(Rc::new(EnvInner {
-            bindings: RefCell::new(HashMap::new()),
-            outer: Some(outer),
-        }))
-    }
-
-    pub fn with_binds(binds: impl IntoIterator<Item = (Rc<str>, MalType)>) -> Self {
-        Self(Rc::new(EnvInner {
-            bindings: RefCell::new(HashMap::from_iter(binds)),
-            outer: None,
-        }))
-    }
-
-    pub fn with_outer_and_binds(
-        outer: Env,
-        binds: impl IntoIterator<Item = (Rc<str>, MalType)>,
-    ) -> Self {
-        Self(Rc::new(EnvInner {
-            bindings: RefCell::new(HashMap::from_iter(binds)),
-            outer: Some(outer),
+            bindings: RefCell::new(bindings),
+            outer,
         }))
     }
 
@@ -61,6 +36,6 @@ impl Env {
 
 impl Default for Env {
     fn default() -> Self {
-        Self::new()
+        Self::new(None, HashMap::new())
     }
 }

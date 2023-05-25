@@ -48,7 +48,7 @@ fn rep(line: &str, repl_env: &Env) -> MalResult<String> {
 }
 
 fn base_env() -> Env {
-    let env = Env::new();
+    let env = Env::default();
 
     env.set("+".into(), to_mal_fn(|a, b| a + b));
     env.set("-".into(), to_mal_fn(|a, b| a - b));
@@ -96,7 +96,7 @@ fn eval(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                         return Err(MalError::WrongArgs);
                     }
 
-                    let new_env = Env::with_outer(repl_env.clone());
+                    let new_env = Env::new(Some(repl_env.clone()), HashMap::new());
 
                     for (name, expr) in bindings.iter().tuples() {
                         let MalType::Symbol(name) = name else {

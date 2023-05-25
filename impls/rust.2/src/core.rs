@@ -53,11 +53,17 @@ fn is_list() -> MalFn {
 
 fn empty() -> MalFn {
     Rc::new(move |args| {
-        let [MalType::List(list)] = args else {
+        let [head] = args else {
             return Err(MalError::WrongArgs);
         };
 
-        Ok(MalType::Bool(list.is_empty()))
+        let res = match head {
+            MalType::List(list) | MalType::Vector(list) => list.is_empty(),
+            MalType::Hashmap(map) => map.is_empty(),
+            _ => return Err(MalError::WrongArgs),
+        };
+
+        Ok(MalType::Bool(res))
     })
 }
 
@@ -69,9 +75,8 @@ fn count() -> MalFn {
 
         let res = match head {
             MalType::Nil => 0,
-            MalType::List(list) => list.len(),
-            // MalType::Vector(_) => todo!(),
-            // MalType::Hashmap(_) => todo!(),
+            MalType::List(list) | MalType::Vector(list) => list.len(),
+            MalType::Hashmap(map) => map.len(),
             _ => return Err(MalError::WrongArgs),
         };
 
@@ -111,7 +116,7 @@ fn print_prn() -> MalFn {
 
 fn print_println() -> MalFn {
     Rc::new(move |args| {
-        let s = args.iter().map(|t| pr_str(t, PrintMode::Readable)).join(" ");
+        let s = args.iter().map(|t| pr_str(t, PrintMode::Verbatim)).join(" ");
         println!("{}", s);
         Ok(MalType::Nil)
     })

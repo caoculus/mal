@@ -4,7 +4,7 @@
 
 STEP0_DEPS = Cargo.toml
 STEP1_DEPS = $(STEP0_DEPS) src/lib.rs src/reader.rs src/printer.rs
-STEP2_DEPS = $(STEP1_DEPS) src/types.rs
+STEP2_DEPS = $(STEP1_DEPS) src/types.rs src/core.rs
 
 step0_repl: $(STEP0_DEPS)
 step1_read_print: $(STEP1_DEPS)
