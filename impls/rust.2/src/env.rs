@@ -11,10 +11,27 @@ struct EnvInner {
 }
 
 impl Env {
-    pub fn new(outer: Option<Env>) -> Self {
+    pub fn new() -> Self {
         Self(Rc::new(EnvInner {
             bindings: RefCell::new(HashMap::new()),
-            outer,
+            outer: None,
+        }))
+    }
+
+    pub fn with_outer(outer: Env) -> Self {
+        Self(Rc::new(EnvInner {
+            bindings: RefCell::new(HashMap::new()),
+            outer: Some(outer),
+        }))
+    }
+
+    pub fn with_outer_and_binds(
+        outer: Env,
+        binds: impl IntoIterator<Item = (Rc<str>, MalType)>,
+    ) -> Self {
+        Self(Rc::new(EnvInner {
+            bindings: RefCell::new(HashMap::from_iter(binds)),
+            outer: Some(outer),
         }))
     }
 
@@ -31,5 +48,11 @@ impl Env {
             .get(key)
             .cloned()
             .or_else(|| self.0.outer.as_ref().and_then(|o| o.get(key)))
+    }
+}
+
+impl Default for Env {
+    fn default() -> Self {
+        Self::new()
     }
 }

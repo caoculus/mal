@@ -5,7 +5,7 @@ use once_cell::sync::OnceCell;
 use regex::Regex;
 use thiserror::Error;
 
-use crate::types::MalType;
+use crate::types::{MalType, KEYWORD_PREFIX};
 
 type ReadResult<T> = Result<T, ReadError>;
 
@@ -44,7 +44,7 @@ fn to_token(s: &str) -> Option<ReadResult<Token<'_>>> {
                     .ok_or(ReadError::UnbalancedString),
             )
         }
-        s if s.starts_with(':') => String(s),
+        s if s.starts_with(':') => String(to_keyword(s)),
         s if s.starts_with(';') => return None,
         _ => Other(s),
     };
@@ -52,28 +52,55 @@ fn to_token(s: &str) -> Option<ReadResult<Token<'_>>> {
     Some(Ok(token))
 }
 
-// TODO: this needs more verification later
-fn parse_string(s: &str) -> Option<&str> {
-    // obviously too short
-    if s.len() < 2 {
+// OK to always create an Rc, since we need one anyway
+fn parse_string(s: &str) -> Option<Rc<str>> {
+    // obvious failures
+    if s.len() < 2 || !s.ends_with('"') {
         return None;
     }
 
-    // check from the back
-    let mut chars = s.chars().rev();
-    let Some('"') = chars.next() else { return None };
+    let mut res = String::with_capacity(s.len()); // possibly longer, but good start
+    let mut escape = false;
+    let mut done = false;
 
-    let bs_count = chars.take_while(|&c| c == '\\').count();
+    // skip the leading quote
+    for c in s.chars().skip(1) {
+        match escape {
+            true => {
+                match c {
+                    c @ ('"' | '\\') => res.push(c),
+                    'n' => res.push('\n'),
+                    _ => {}
+                }
+                escape = false;
+            }
+            false => match c {
+                '\\' => escape = true,
+                '"' => {
+                    done = true;
+                    break;
+                }
+                _ => res.push(c),
+            },
+        }
+    }
 
-    (bs_count % 2 == 0).then_some(s)
+    done.then(|| Rc::from(res))
 }
 
-// TODO: make this no longer public
+fn to_keyword(s: &str) -> Rc<str> {
+    Rc::from(
+        std::iter::once(KEYWORD_PREFIX)
+            .chain(s.chars().skip(1))
+            .collect::<String>(),
+    )
+}
+
 #[derive(Debug)]
-pub enum Token<'a> {
+enum Token<'a> {
     Left(Pair),
     Right(Pair),
-    String(&'a str),
+    String(Rc<str>),
     Other(&'a str),
 }
 
@@ -163,11 +190,7 @@ where
                     .map(|h| MalType::Hashmap(Rc::new(h)))
             }
             Pair::Bracket => Ok(MalType::Vector(Rc::new(list))),
-            Pair::Parenthesis => Ok(if list.is_empty() {
-                MalType::Nil
-            } else {
-                MalType::List(Rc::new(list))
-            }),
+            Pair::Parenthesis => Ok(MalType::List(Rc::new(list))),
         }
     }
 
@@ -209,7 +232,10 @@ where
 
     fn read_atom(token: &Token<'a>) -> MalType {
         match token {
-            Token::String(s) => MalType::String(Rc::from(*s)),
+            Token::String(s) => MalType::String(s.clone()),
+            Token::Other("nil") => MalType::Nil,
+            Token::Other("true") => MalType::Bool(true),
+            Token::Other("false") => MalType::Bool(false),
             Token::Other(s) => s
                 .parse()
                 .map(MalType::Number)

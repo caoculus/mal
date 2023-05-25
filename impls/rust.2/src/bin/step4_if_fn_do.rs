@@ -114,17 +114,71 @@ fn eval(ast: MalType, repl_env: &Env) -> EvalResult<MalType> {
 
                     eval(expr.clone(), &prev)
                 }
+                MalType::Symbol(s) if s.as_ref() == "do" => {
+                    let mut res = None;
+
+                    for val in list.iter().skip(1).cloned() {
+                        res = Some(eval(val, repl_env)?);
+                    }
+
+                    // tail must have at least one element
+                    res.ok_or(EvalError::WrongArgs)
+                }
+                MalType::Symbol(s) if s.as_ref() == "if" => {
+                    let [_, cond, t_branch, f_branch] = list.as_slice() else {
+                                return Err(EvalError::WrongArgs);
+                            };
+
+                    let cond_res = eval(cond.clone(), repl_env)?;
+
+                    if cond_res.into() {
+                        eval(t_branch.clone(), repl_env)
+                    } else {
+                        eval(f_branch.clone(), repl_env)
+                    }
+                }
+                MalType::Symbol(s) if s.as_ref() == "fn*" => {
+                    let [_, MalType::List(binds), body] = list.as_slice() else {
+                                return Err(EvalError::WrongArgs);
+                            };
+
+                    let binds = binds
+                        .iter()
+                        .map(|v| match v {
+                            MalType::Symbol(s) => Ok(s.clone()),
+                            _ => Err(EvalError::WrongArgs),
+                        })
+                        .collect::<EvalResult<Vec<Rc<str>>>>()?;
+                    let body = body.clone();
+                    let outer = repl_env.clone();
+
+                    // a lot of cloning happening, because the function can get called
+                    // multiple times
+                    Ok(MalType::Fn(Rc::new(move |args| {
+                        if binds.len() != args.len() {
+                            return Err(EvalError::WrongArgs);
+                        }
+
+                        let env = Env::with_outer_and_binds(
+                            outer.clone(),
+                            binds.iter().cloned().zip(args.iter().cloned()),
+                        );
+
+                        eval(body.clone(), &env)
+                    })))
+                }
                 _ => {
                     // re-evaluate
                     let MalType::List(list) = eval_ast(MalType::List(list.clone()), repl_env)? else {
                         unreachable!("eval_ast should return a list")
                     };
 
-                    let MalType::Fn(f) = list.first().expect("list should not be empty") else {
-                        return Err(EvalError::InvalidHead);
-                    };
+                    let head = list.first().expect("list should not be empty");
 
-                    f(&list[1..])
+                    match head {
+                        MalType::Fn(f) => f(&list[1..]),
+                        _ => Err(EvalError::InvalidHead),
+                    }
                 }
             }
         }

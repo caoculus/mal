@@ -1,19 +1,14 @@
-use std::{
-    collections::HashMap,
-    io::{stdin, stdout, Write},
-    rc::Rc,
-};
+use std::{collections::HashMap, rc::Rc};
 
 use mal::{
     eval::{EvalError, EvalResult},
-    printer::pr_str,
+    printer::{pr_str, PrintMode},
     reader::read_str,
     types::MalType,
 };
+use rustyline::{error::ReadlineError, DefaultEditor};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut lines = stdin().lines();
-
     let repl_env: HashMap<Rc<str>, MalType> = HashMap::from([
         ("+".into(), to_mal_fn(|a, b| a + b)),
         ("-".into(), to_mal_fn(|a, b| a - b)),
@@ -21,27 +16,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("/".into(), to_mal_fn(|a, b| a / b)),
     ]);
 
+    let mut rl = DefaultEditor::new()?;
+
     loop {
-        print!("user> ");
-        stdout().flush()?;
+        match rl.readline("user> ") {
+            Ok(line) => {
+                rl.add_history_entry(&line)?;
+                let ast = match read_str(&line) {
+                    Ok(ast) => {
+                        println!("{}", pr_str(&ast, PrintMode::Readable));
+                        ast
+                    }
+                    Err(e) => {
+                        println!("{}", e);
+                        continue;
+                    }
+                };
 
-        let Some(Ok(line)) = lines.next() else { break };
-
-        let ast = match read_str(&line) {
-            Ok(ast) => {
-                println!("{}", pr_str(&ast));
-                ast
+                match eval(ast, &repl_env) {
+                    Ok(res) => println!("{}", pr_str(&res, PrintMode::Readable)),
+                    Err(e) => println!("{}", e),
+                };
             }
-            Err(e) => {
-                println!("{}", e);
-                continue;
+            Err(ReadlineError::Interrupted) => {
+                println!("CTRL-C");
+                break;
             }
-        };
-
-        match eval(ast, &repl_env) {
-            Ok(res) => println!("{}", pr_str(&res)),
-            Err(e) => println!("{}", e),
-        };
+            Err(ReadlineError::Eof) => {
+                println!("CTRL-D");
+                break;
+            }
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
+        }
     }
 
     Ok(())
@@ -66,8 +75,8 @@ fn eval(ast: MalType, repl_env: &HashMap<Rc<str>, MalType>) -> EvalResult<MalTyp
                 unreachable!("eval_ast should return a list")
             };
 
-            let MalType::Fn(f) = list.first().expect("list should never be empty") else {
-                return Err(EvalError::NotAFunction);
+            let Some(MalType::Fn(f)) = list.first() else {
+                return Err(EvalError::InvalidHead);
             };
 
             f(&list[1..])

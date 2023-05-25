@@ -8,8 +8,7 @@ STEP2_DEPS = $(STEP1_DEPS) src/eval.rs src/types.rs
 
 step0_repl: $(STEP0_DEPS)
 step1_read_print: $(STEP1_DEPS)
-step2_eval: $(STEP2_DEPS)
-step3_env: $(STEP2_DEPS)
+step2_eval step3_env step4_if_fn_do: $(STEP2_DEPS)
 
 .PHONY: clean
 

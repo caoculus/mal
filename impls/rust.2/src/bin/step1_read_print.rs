@@ -1,22 +1,35 @@
-use std::{
-    error::Error,
-    io::{stdin, stdout, Write},
-};
+use std::error::Error;
 
-use mal::{printer::pr_str, reader::read_str};
+use mal::{
+    printer::{pr_str, PrintMode},
+    reader::read_str,
+};
+use rustyline::{error::ReadlineError, DefaultEditor};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut lines = stdin().lines();
+    let mut rl = DefaultEditor::new()?;
 
     loop {
-        print!("user> ");
-        stdout().flush()?;
-
-        let Some(Ok(line)) = lines.next() else { break };
-
-        match read_str(&line) {
-            Ok(res) => println!("{}", pr_str(&res)),
-            Err(e) => println!("{}", e),
+        match rl.readline("user> ") {
+            Ok(line) => {
+                rl.add_history_entry(&line)?;
+                match read_str(&line) {
+                    Ok(res) => println!("{}", pr_str(&res, PrintMode::Readable)),
+                    Err(e) => println!("{}", e),
+                }
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!("CTRL-C");
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                println!("CTRL-D");
+                break;
+            }
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
         }
     }
 

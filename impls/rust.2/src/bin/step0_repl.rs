@@ -1,17 +1,29 @@
-use std::{
-    error::Error,
-    io::{stdin, stdout, Write},
-};
+use std::error::Error;
+
+use rustyline::{error::ReadlineError, DefaultEditor};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut lines = stdin().lines();
+    let mut rl = DefaultEditor::new()?;
 
     loop {
-        print!("user> ");
-        stdout().flush()?;
-
-        let Some(Ok(line)) = lines.next() else { break };
-        println!("{}", line);
+        match rl.readline("user> ") {
+            Ok(line) => {
+                rl.add_history_entry(&line)?;
+                println!("{}", line);
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!("CTRL-C");
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                println!("CTRL-D");
+                break;
+            }
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
+        }
     }
 
     Ok(())
