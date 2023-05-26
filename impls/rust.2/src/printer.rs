@@ -24,6 +24,9 @@ pub fn pr_str(data: &MalType, mode: PrintMode) -> String {
             "}",
         ),
         MalType::Fn(_) | MalType::Closure(_) => "#<function>".into(),
+        MalType::Atom(data) => {
+            list_to_string(["atom".into(), pr_str(&data.borrow(), mode)], "(", ")")
+        }
     }
 }
 
@@ -61,9 +64,9 @@ fn print_mal_string(s: &str, readably: PrintMode) -> String {
     }
 }
 
-fn list_to_string(iter: impl Iterator<Item = String>, left: &str, right: &str) -> String {
+fn list_to_string(iter: impl IntoIterator<Item = String>, left: &str, right: &str) -> String {
     std::iter::once(left.into())
-        .chain(Itertools::intersperse(iter, " ".into()))
+        .chain(Itertools::intersperse(iter.into_iter(), " ".into()))
         .chain(std::iter::once(right.into()))
         .collect()
 }

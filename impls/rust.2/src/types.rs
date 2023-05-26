@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use derivative::Derivative;
 use thiserror::Error;
@@ -21,12 +21,14 @@ pub enum MalType {
     List(Rc<Vec<MalType>>),
     Vector(Rc<Vec<MalType>>),
     Hashmap(Rc<HashMap<Rc<str>, MalType>>),
-    // TODO: consider splitting this based on closures vs non-closures?
     Fn(#[derivative(Debug = "ignore")] MalFn),
     Closure(#[derivative(Debug = "ignore")] Rc<MalClosure>),
+    Atom(Rc<RefCell<MalType>>),
 }
 
 pub struct MalClosure {
+    // NOTE: this is here because core needs to call eval, which is different for each step
+    pub eval: fn(MalType, &Env) -> MalResult<MalType>,
     pub params: MalParams,
     pub outer: Env,
     pub body: MalType,
@@ -106,7 +108,7 @@ impl MalParams {
     }
 }
 
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error)]
 pub enum MalError {
     #[error("unbalanced")]
     UnbalancedString,
@@ -114,12 +116,15 @@ pub enum MalError {
     Eof,
     #[error("invalid hashmap")]
     InvalidHashmap,
+    // TODO: change this to take a string
     #[error("invalid arguments")]
     WrongArgs,
     #[error("head of list cannot be evaluated (not a function or special keyword)")]
     InvalidHead,
     #[error("'{0}' not found.")]
     NotFound(Rc<str>),
+    #[error(transparent)]
+    IOError(std::io::Error),
 }
 
 impl From<MalType> for bool {

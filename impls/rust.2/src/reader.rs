@@ -163,7 +163,7 @@ where
                 self.tokens.next();
                 Ok(res)
             }
-            Err(e) => Err(e.clone()),
+            Err(_) => Err(self.tokens.next().unwrap().unwrap_err()),
         }
     }
 
@@ -220,7 +220,7 @@ where
                     return Ok(list);
                 }
                 Ok(_) => list.push(self.read_form()?),
-                Err(e) => return Err(e.clone()),
+                Err(_) => return Err(self.tokens.next().unwrap().unwrap_err()),
             }
         }
 

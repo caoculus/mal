@@ -6,15 +6,13 @@ use mal::{
     env::Env,
     printer::{pr_str, PrintMode},
     reader::read_str,
-    types::{MalClosure, MalError, MalParams, MalResult, MalType},
+    types::{MalClosure, MalError, MalFn, MalParams, MalResult, MalType},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repl_env = base_env();
 
-    // defining the not function
-    rep("(def! not (fn* (a) (if a false true)))", &repl_env)
-        .expect("Failed to define `not` function");
+    define_additional(&repl_env);
 
     let mut rl = DefaultEditor::new()?;
 
@@ -59,6 +57,27 @@ fn base_env() -> Env {
             .map(|(k, v)| (k.into(), MalType::Fn(v)))
             .collect(),
     )
+}
+
+fn define_additional(repl_env: &Env) {
+    // eval function
+    repl_env.set("eval".into(), MalType::Fn(eval_fn(repl_env.clone())));
+    // not function
+    rep("(def! not (fn* (a) (if a false true)))", repl_env).unwrap();
+    // load-file function
+    rep(
+        r#"(def! load-file (fn* (f) (eval (read-string (str "(do " (slurp f) "\nnil)")))))"#,
+        repl_env,
+    )
+    .unwrap();
+}
+
+fn eval_fn(repl_env: Env) -> MalFn {
+    Rc::new(move |args| {
+        let [ast] = args else { return Err(MalError::WrongArgs); };
+
+        eval(ast.clone(), &repl_env)
+    })
 }
 
 fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
@@ -153,8 +172,9 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                             unreachable!("eval_ast should return a list")
                         };
 
-                        let head = list.first().expect("list should not be empty");
-                        let args = &list[1..];
+                        let [head, args @ ..] = list.as_slice() else {
+                            unreachable!("list should not be empty")
+                        };
 
                         match head {
                             MalType::Fn(f) => return f(args),
@@ -207,9 +227,4 @@ fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
         ))),
         val => Ok(val),
     }
-}
-
-#[test]
-fn test() {
-    rep("( (fn* (& more) (count more)) 1 2 3)", &base_env()).unwrap();
 }
