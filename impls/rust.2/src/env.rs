@@ -2,9 +2,10 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::types::MalType;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Env(Rc<EnvInner>);
 
+#[derive(Debug)]
 struct EnvInner {
     bindings: RefCell<HashMap<Rc<str>, MalType>>,
     outer: Option<Env>,

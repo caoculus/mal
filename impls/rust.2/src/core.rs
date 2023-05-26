@@ -232,6 +232,25 @@ fn concat(args: Args) -> MalRet {
 }
 
 pub fn quasiquote(args: Args) -> MalResult<MalType> {
+    fn go(ast: &MalType) -> MalResult<MalType> {
+        match ast {
+            MalType::List(list) => match &list[..] {
+                [MalType::Symbol(s), tail @ ..] if &s[..] == "unquote" => {
+                    args!([snd] = tail);
+                    Ok(snd.clone())
+                }
+                _ => go_list(list),
+            },
+            MalType::Hashmap(..) | MalType::Symbol(..) => Ok(MalType::List(
+                vec![MalType::Symbol("quote".into()), ast.clone()].into(),
+            )),
+            MalType::Vector(list) => Ok(MalType::List(
+                vec![MalType::Symbol("vec".into()), go_list(list)?].into(),
+            )),
+            _ => Ok(ast.clone()),
+        }
+    }
+
     fn go_list(list: &[MalType]) -> MalResult<MalType> {
         list.iter()
             .rev()
@@ -249,34 +268,14 @@ pub fn quasiquote(args: Args) -> MalResult<MalType> {
                 }
 
                 Ok(MalType::List(
-                    vec![
-                        MalType::Symbol("cons".into()),
-                        quasiquote(&[elt.clone()])?,
-                        acc,
-                    ]
-                    .into(),
+                    vec![MalType::Symbol("cons".into()), go(elt)?, acc].into(),
                 ))
             })
     }
 
     args!([ast] = args);
 
-    match ast {
-        MalType::List(list) => match &list[..] {
-            [MalType::Symbol(s), tail @ ..] if &s[..] == "unquote" => {
-                args!([snd] = tail);
-                Ok(snd.clone())
-            }
-            _ => go_list(list),
-        },
-        MalType::Hashmap(..) | MalType::Symbol(..) => Ok(MalType::List(
-            vec![MalType::Symbol("quote".into()), ast.clone()].into(),
-        )),
-        MalType::Vector(list) => Ok(MalType::List(
-            vec![MalType::Symbol("vec".into()), go_list(list)?].into(),
-        )),
-        _ => Ok(ast.clone()),
-    }
+    go(ast)
 }
 
 fn vec(args: Args) -> MalRet {

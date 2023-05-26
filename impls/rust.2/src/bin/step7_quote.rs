@@ -216,12 +216,12 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                     unreachable!("eval_ast should return a list")
                 };
 
-                let [head, args @ ..] = &list[..] else {
+                let [head, tail @ ..] = &list[..] else {
                     unreachable!("list should not be empty")
                 };
 
                 match head {
-                    MalType::Fn(f) => return f(args),
+                    MalType::Fn(f) => return f(tail),
                     MalType::Closure(closure) => {
                         let MalClosure {
                             params,
@@ -229,12 +229,13 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                             body,
                             ..
                         } = closure.as_ref();
-                        let binds = params.bind(args)?;
+                        let binds = params.bind(tail)?;
 
                         (ast, repl_env) = (
                             body.clone(),
                             Cow::Owned(Env::new(Some(outer.clone()), binds)),
                         );
+                        continue;
                     }
                     _ => return Err(MalError::InvalidHead),
                 };

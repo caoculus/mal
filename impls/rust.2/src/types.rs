@@ -26,14 +26,18 @@ pub enum MalType {
     Atom(Rc<RefCell<MalType>>),
 }
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct MalClosure {
     // NOTE: this is here because core needs to call eval, which is different for each step
+    #[derivative(Debug = "ignore")]
     pub eval: fn(MalType, &Env) -> MalResult<MalType>,
     pub params: MalParams,
     pub outer: Env,
     pub body: MalType,
 }
 
+#[derive(Debug)]
 pub struct MalParams {
     pub names: Vec<Rc<str>>,
     pub variadic: Option<Rc<str>>,
