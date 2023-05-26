@@ -78,8 +78,8 @@ fn base_env() -> Env {
     Env::new(
         None,
         mal::core::ns()
-            .into_iter()
-            .map(|(k, v)| (k.into(), MalType::Fn(v)))
+            .iter()
+            .map(|(k, v)| ((*k).into(), MalType::Fn(Rc::new(v))))
             .collect(),
     )
 }
