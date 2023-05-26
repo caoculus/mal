@@ -14,7 +14,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repl_env = base_env();
 
     define_additional(&repl_env);
-    check_cmd_args(&repl_env)?;
+
+    let args: Vec<_> = std::env::args().collect();
+
+    if let [_, name, argv @ ..] = args.as_slice() {
+        repl_env.set(
+            "*ARGV*".into(),
+            MalType::List(Rc::new(
+                argv.iter()
+                    .map(|a| MalType::String(a.as_str().into()))
+                    .collect(),
+            )),
+        );
+
+        rep(&format!("(load-file \"{name}\")"), &repl_env)?;
+        return Ok(());
+    }
+
+    repl_env.set("*ARGV*".into(), MalType::List(vec![].into()));
 
     let mut rl = DefaultEditor::new()?;
 
@@ -40,26 +57,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
         }
-    }
-
-    Ok(())
-}
-
-fn check_cmd_args(repl_env: &Env) -> MalResult<()> {
-    let args: Vec<_> = std::env::args().collect();
-
-    if let [_, name, argv @ ..] = args.as_slice() {
-        repl_env.set(
-            "*ARGV*".into(),
-            MalType::List(Rc::new(
-                argv.iter()
-                    .map(|a| MalType::String(a.as_str().into()))
-                    .collect(),
-            )),
-        );
-        rep(&format!("(load-file \"{name}\")"), repl_env)?;
-    } else {
-        repl_env.set("*ARGV*".into(), MalType::List(Rc::new(vec![])));
     }
 
     Ok(())
