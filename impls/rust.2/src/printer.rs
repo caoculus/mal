@@ -23,7 +23,7 @@ pub fn pr_str(data: &MalType, mode: PrintMode) -> String {
             "{",
             "}",
         ),
-        MalType::Fn(_) => "#<function>".into(),
+        MalType::Fn(_) | MalType::Closure(_) => "#<function>".into(),
     }
 }
 

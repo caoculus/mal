@@ -3,8 +3,7 @@ use std::{collections::HashMap, rc::Rc};
 use derivative::Derivative;
 use thiserror::Error;
 
-// strings are assumed to be lightweight enough
-// other values are Rc-wrapped to make them better suited for cloning
+use crate::env::Env;
 
 pub type MalResult<T> = Result<T, MalError>;
 pub type MalFn = Rc<dyn Fn(&[MalType]) -> MalResult<MalType> + 'static>;
@@ -24,6 +23,87 @@ pub enum MalType {
     Hashmap(Rc<HashMap<Rc<str>, MalType>>),
     // TODO: consider splitting this based on closures vs non-closures?
     Fn(#[derivative(Debug = "ignore")] MalFn),
+    Closure(#[derivative(Debug = "ignore")] Rc<MalClosure>),
+}
+
+pub struct MalClosure {
+    pub params: MalParams,
+    pub outer: Env,
+    pub body: MalType,
+}
+
+pub struct MalParams {
+    pub names: Vec<Rc<str>>,
+    pub variadic: Option<Rc<str>>,
+}
+
+impl MalParams {
+    pub fn new(binds: &[MalType]) -> MalResult<Self> {
+        let mut names = vec![];
+        let mut variadic = None;
+
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum State {
+            Named,
+            VarStart,
+            Done,
+        }
+
+        let mut state = State::Named;
+
+        for t in binds {
+            let MalType::Symbol(name) = t else {
+            return Err(MalError::WrongArgs);
+        };
+
+            match (state, name.as_ref()) {
+                (State::Named, "&") => state = State::VarStart,
+                (State::Named, _) => names.push(name.clone()),
+                (State::VarStart, n) if n != "&" => {
+                    variadic = Some(name.clone());
+                    state = State::Done;
+                }
+                _ => return Err(MalError::WrongArgs),
+            }
+        }
+
+        (state != State::VarStart)
+            .then_some(MalParams { names, variadic })
+            .ok_or(MalError::WrongArgs)
+    }
+
+    pub fn bind(&self, args: &[MalType]) -> MalResult<HashMap<Rc<str>, MalType>> {
+        let Self { names, variadic } = self;
+
+        match &variadic {
+            Some(variadic) => {
+                if args.len() < names.len() {
+                    return Err(MalError::WrongArgs);
+                }
+
+                let var_list = MalType::List(Rc::new(args[names.len()..].to_vec()));
+                Ok(self
+                    .names
+                    .iter()
+                    .cloned()
+                    .zip(args.iter().cloned())
+                    .chain(std::iter::once((variadic.clone(), var_list)))
+                    .collect())
+            }
+            None => {
+                if args.len() != names.len() {
+                    return Err(MalError::WrongArgs);
+                }
+
+                Ok(self
+                    .names
+                    .iter()
+                    .cloned()
+                    .zip(args.iter().cloned())
+                    .collect())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Error, Clone)]
