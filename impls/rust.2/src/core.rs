@@ -1,3 +1,4 @@
+use crate::args;
 use std::{cell::RefCell, iter, rc::Rc};
 
 use itertools::Itertools;
@@ -37,12 +38,6 @@ pub fn ns() -> Vec<(&'static str, MalFn)> {
         ("reset!", reset()),
         ("swap!", swap()),
     ]
-}
-
-macro_rules! args {
-    ($pat:pat = $args:ident) => {
-        let $pat = $args else { return Err(MalError::WrongArgs) };
-    };
 }
 
 fn bin_op<T>(f: impl Fn(i64, i64) -> T + 'static, wrap: impl Fn(T) -> MalType + 'static) -> MalFn {

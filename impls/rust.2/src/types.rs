@@ -108,6 +108,13 @@ impl MalParams {
     }
 }
 
+#[macro_export]
+macro_rules! args {
+    ($pat:pat = $args:ident) => {
+        let $pat = $args else { return Err(MalError::WrongArgs) };
+    };
+}
+
 #[derive(Debug, Error)]
 pub enum MalError {
     #[error("unbalanced")]

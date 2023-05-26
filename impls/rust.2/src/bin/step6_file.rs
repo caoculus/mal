@@ -3,6 +3,7 @@ use rustyline::{error::ReadlineError, DefaultEditor};
 use std::{borrow::Cow, collections::HashMap, rc::Rc};
 
 use mal::{
+    args,
     env::Env,
     printer::{pr_str, PrintMode},
     reader::read_str,
@@ -107,16 +108,14 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
     loop {
         match ast {
             MalType::List(ref list) => {
-                // empty list case
-                let Some(head) = list.first() else {
+                let [head, tail @ ..] = list.as_slice() else {
+                    // empty list
                     return Ok(ast);
                 };
 
                 match head {
                     MalType::Symbol(s) if s.as_ref() == "def!" => {
-                        let [_, MalType::Symbol(name), expr] = list.as_slice() else {
-                            return Err(MalError::WrongArgs);
-                        };
+                        args!([MalType::Symbol(name), expr] = tail);
 
                         let value = eval(expr.clone(), &repl_env)?;
                         repl_env.set(name.clone(), value.clone());
@@ -124,9 +123,7 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                         return Ok(value);
                     }
                     MalType::Symbol(s) if s.as_ref() == "let*" => {
-                        let [_, MalType::List(bindings) | MalType::Vector(bindings), expr] = list.as_slice() else {
-                            return Err(MalError::WrongArgs);
-                        };
+                        args!([MalType::List(bindings) | MalType::Vector(bindings), expr] = tail);
 
                         if bindings.len() % 2 != 0 {
                             return Err(MalError::WrongArgs);
@@ -135,9 +132,7 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                         let new_env = Env::new(Some((*repl_env).clone()), HashMap::new());
 
                         for (name, expr) in bindings.iter().tuples() {
-                            let MalType::Symbol(name) = name else {
-                                return Err(MalError::WrongArgs);
-                            };
+                            args!(MalType::Symbol(name) = name);
 
                             let value = eval(expr.clone(), &new_env)?;
 
@@ -147,23 +142,20 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                         (ast, repl_env) = (expr.clone(), Cow::Owned(new_env));
                     }
                     MalType::Symbol(s) if s.as_ref() == "do" => {
-                        // tail must have at least one element
-                        if list.len() < 2 {
-                            return Err(MalError::WrongArgs);
-                        }
+                        args!([mid @ .., last] = tail);
 
-                        for val in list[1..list.len() - 1].iter().cloned() {
+                        for val in mid.iter().cloned() {
                             eval(val, &repl_env)?;
                         }
 
-                        ast = list[list.len() - 1].clone();
+                        ast = last.clone();
                     }
                     MalType::Symbol(s) if s.as_ref() == "if" => {
                         // if branch is allowed to skip its false branch
                         // in which case, the false branch is simply nil
-                        let (cond, t_branch, f_branch) = match list.as_slice() {
-                            [_, cond, t_branch] => (cond, t_branch, &MalType::Nil),
-                            [_, cond, t_branch, f_branch] => (cond, t_branch, f_branch),
+                        let (cond, t_branch, f_branch) = match tail {
+                            [cond, t_branch] => (cond, t_branch, &MalType::Nil),
+                            [cond, t_branch, f_branch] => (cond, t_branch, f_branch),
                             _ => return Err(MalError::WrongArgs),
                         };
 
@@ -176,9 +168,7 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                         };
                     }
                     MalType::Symbol(s) if s.as_ref() == "fn*" => {
-                        let [_, MalType::List(binds) | MalType::Vector(binds), body] = list.as_slice() else {
-                            return Err(MalError::WrongArgs);
-                        };
+                        args!([MalType::List(binds) | MalType::Vector(binds), body] = tail);
 
                         let params = MalParams::new(binds)?;
                         return Ok(MalType::Closure(Rc::new(MalClosure {
