@@ -1,4 +1,4 @@
-use crate::args;
+use crate::{args, types::MalResult};
 use std::{cell::RefCell, iter, rc::Rc};
 
 use itertools::Itertools;
@@ -12,6 +12,7 @@ use crate::{
 
 // returns the base environment
 pub fn ns() -> Vec<(&'static str, MalFn)> {
+    // TODO: if easier, change everything to pure functions?
     vec![
         ("+", bin_op(|a, b| a + b, MalType::Number)),
         ("-", bin_op(|a, b| a - b, MalType::Number)),
@@ -37,6 +38,9 @@ pub fn ns() -> Vec<(&'static str, MalFn)> {
         ("deref", deref()),
         ("reset!", reset()),
         ("swap!", swap()),
+        ("cons", cons()),
+        ("concat", concat()),
+        ("quasiquote", Rc::new(quasiquote)),
     ]
 }
 
@@ -223,4 +227,84 @@ fn swap() -> MalFn {
         *atom.borrow_mut() = res.clone();
         Ok(res)
     })
+}
+
+fn cons() -> MalFn {
+    Rc::new(move |args| {
+        args!([elt, MalType::List(list) | MalType::Vector(list)] = args);
+
+        Ok(MalType::List(
+            iter::once(elt.clone())
+                .chain(list.iter().cloned())
+                .collect_vec()
+                .into(),
+        ))
+    })
+}
+
+fn concat() -> MalFn {
+    Rc::new(move |args| {
+        let elts = args
+            .iter()
+            .map(|elt| match elt {
+                MalType::List(list) | MalType::Vector(list) => Ok(list),
+                _ => Err(MalError::WrongArgs),
+            })
+            .collect::<MalResult<Vec<_>>>()?;
+
+        Ok(MalType::List(
+            elts.iter()
+                .flat_map(|list| list.iter().cloned())
+                .collect_vec()
+                .into(),
+        ))
+    })
+}
+
+pub fn quasiquote(args: &[MalType]) -> MalResult<MalType> {
+    fn go_list(list: &[MalType]) -> MalResult<MalType> {
+        list.iter()
+            .rev()
+            .try_fold(MalType::List(vec![].into()), |acc, elt| {
+                if let MalType::List(list) = elt {
+                    match &list[..] {
+                        [MalType::Symbol(s), tail @ ..] if &s[..] == "splice-unquote" => {
+                            args!([snd] = tail);
+                            return Ok(MalType::List(
+                                vec![MalType::Symbol("concat".into()), snd.clone(), acc].into(),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+
+                Ok(MalType::List(
+                    vec![
+                        MalType::Symbol("cons".into()),
+                        quasiquote(&[elt.clone()])?,
+                        acc,
+                    ]
+                    .into(),
+                ))
+            })
+    }
+
+    args!([ast] = args);
+
+    match ast {
+        MalType::List(list) => match &list[..] {
+            [MalType::Symbol(s), tail @ ..] if &s[..] == "unquote" => {
+                args!([snd] = tail);
+                Ok(snd.clone())
+            }
+            _ => go_list(list),
+        },
+        MalType::Hashmap(..) | MalType::Symbol(..) => Ok(MalType::List(
+            vec![MalType::Symbol("quote".into()), ast.clone()].into(),
+        )),
+        MalType::Vector(list) => Ok(MalType::List(
+            vec![MalType::Symbol("vec".into()), go_list(list)?].into(),
+        )),
+        _ => Ok(ast.clone()),
+    }
 }
