@@ -41,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rl.add_history_entry(&line)?;
                 match rep(&line, &repl_env) {
                     Ok(res) => println!("{}", res),
+                    Err(MalError::Comment) => {}
                     Err(e) => println!("{}", e),
                 };
             }

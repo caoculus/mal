@@ -64,6 +64,7 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         ("cons", cons),
         ("concat", concat),
         ("quasiquote", quasiquote),
+        ("vec", vec),
     ]
 }
 
@@ -230,7 +231,7 @@ fn concat(args: Args) -> MalRet {
     ))
 }
 
-pub fn quasiquote(args: &[MalType]) -> MalResult<MalType> {
+pub fn quasiquote(args: Args) -> MalResult<MalType> {
     fn go_list(list: &[MalType]) -> MalResult<MalType> {
         list.iter()
             .rev()
@@ -276,4 +277,10 @@ pub fn quasiquote(args: &[MalType]) -> MalResult<MalType> {
         )),
         _ => Ok(ast.clone()),
     }
+}
+
+fn vec(args: Args) -> MalRet {
+    args!([MalType::List(list) | MalType::Vector(list)] = args);
+
+    Ok(MalType::Vector(list.to_vec().into()))
 }

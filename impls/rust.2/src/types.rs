@@ -123,6 +123,8 @@ pub enum MalError {
     Eof,
     #[error("invalid hashmap")]
     InvalidHashmap,
+    #[error("")]
+    Comment,
     // TODO: change this to take a string
     #[error("invalid arguments")]
     WrongArgs,

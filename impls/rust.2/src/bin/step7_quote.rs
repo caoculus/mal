@@ -26,6 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rl.add_history_entry(&line)?;
                 match rep(&line, &repl_env) {
                     Ok(res) => println!("{}", res),
+                    Err(MalError::Comment) => {}
                     Err(e) => println!("{}", e),
                 };
             }
@@ -238,8 +239,39 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                     _ => return Err(MalError::InvalidHead),
                 };
             }
-            ast => return eval_ast(ast, &repl_env),
+            MalType::Vector(ref list) => {
+                let [head, tail @ ..] = &list[..] else {
+                    // empty list
+                    return Ok(ast);
+                };
+
+                if let MalType::Symbol(s) = head {
+                    match &s[..] {
+                        "quote" => {
+                            args!([val] = tail);
+
+                            return Ok(val.clone());
+                        }
+                        "quasiquoteexpand" => {
+                            args!(val @ &[_] = tail);
+                            assert!(!val.is_empty());
+
+                            return mal::core::quasiquote(val);
+                        }
+                        "quasiquote" => {
+                            args!(val @ &[_] = tail);
+                            assert!(!val.is_empty());
+
+                            ast = mal::core::quasiquote(val)?;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
         }
+        return eval_ast(ast, &repl_env);
     }
 }
 
@@ -271,4 +303,9 @@ fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
         )),
         val => Ok(val),
     }
+}
+
+#[test]
+fn test() {
+    rep("((fn* (q) (quasiquote ((unquote q) (quote (unquote q))))) (quote (fn* (q) (quasiquote ((unquote q) (quote (unquote q)))))))", &base_env()).unwrap();
 }

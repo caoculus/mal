@@ -8,7 +8,7 @@ use crate::types::{MalError, MalResult, MalType, KEYWORD_PREFIX};
 
 pub fn read_str(text: &str) -> MalResult<MalType> {
     let mut reader = Reader::new(tokenize(text));
-    reader.read_form()
+    reader.read_form_init()
 }
 
 fn tokenize(text: &str) -> impl Iterator<Item = MalResult<Token<'_>>> {
@@ -108,16 +108,6 @@ pub enum Pair {
     Parenthesis,
 }
 
-// #[derive(Debug, Error, Clone, Copy)]
-// pub enum MalError {
-//     #[error("unbalanced")]
-//     UnbalancedString,
-//     #[error("EOF")]
-//     Eof,
-//     #[error("invalid hashmap")]
-//     InvalidHashmap,
-// }
-
 struct Reader<I>
 where
     I: Iterator,
@@ -135,8 +125,17 @@ where
         }
     }
 
+    // hacky workaround?
+    fn read_form_init(&mut self) -> MalResult<MalType> {
+        if self.tokens.peek().is_none() {
+            return Err(MalError::Comment);
+        }
+
+        self.read_form()
+    }
+
     fn read_form(&mut self) -> MalResult<MalType> {
-        let Some(token) = self.tokens.peek() else { return Ok(MalType::Nil) };
+        let token = self.tokens.peek().ok_or(MalError::Eof)?;
 
         match token {
             Ok(Token::Right(_)) => Err(MalError::Eof),
