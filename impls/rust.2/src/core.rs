@@ -61,6 +61,9 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         is!("vector?", MalType::Vector(..)),
         is!("sequential?", MalType::List(..) | MalType::Vector(..)),
         is!("map?", MalType::Hashmap(..)),
+        is!("fn?", MalType::Fn(..) | MalType::Closure(..)),
+        is!("string?", MalType::String(..)),
+        is!("number?", MalType::Number(..)),
         ("list", list),
         ("empty?", empty),
         ("count", count),
@@ -96,7 +99,16 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         ("keys", keys),
         ("vals", vals),
         ("readline", readline),
+        ("time-ms", unimplemented),
+        ("meta", unimplemented),
+        ("with-meta", unimplemented),
+        ("seq", unimplemented),
+        ("conj", unimplemented),
     ]
+}
+
+fn unimplemented(_args: Args) -> MalRet {
+    error!("unimplemented")
 }
 
 fn is_keyword_str(s: &str) -> bool {
