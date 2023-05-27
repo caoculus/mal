@@ -1,18 +1,22 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
 
 use derivative::Derivative;
 use thiserror::Error;
 
-use crate::env::Env;
+use crate::{
+    env::Env,
+    printer::{pr_str, PrintMode},
+};
 
 pub type MalResult<T> = Result<T, MalError>;
 pub type MalFn = Rc<dyn Fn(&[MalType]) -> MalResult<MalType> + 'static>;
 
 pub const KEYWORD_PREFIX: char = '\u{029e}';
 
-#[derive(Derivative, Clone)]
+#[derive(Derivative, Clone, Default)]
 #[derivative(Debug)]
 pub enum MalType {
+    #[default]
     Nil,
     Bool(bool),
     Number(i64),
@@ -21,23 +25,58 @@ pub enum MalType {
     List(Rc<Vec<MalType>>),
     Vector(Rc<Vec<MalType>>),
     Hashmap(Rc<HashMap<Rc<str>, MalType>>),
+    // NOTE: hard to change to a fn pointer, `eval` function needs this to be a closure still
     Fn(#[derivative(Debug = "ignore")] MalFn),
     Closure(#[derivative(Debug = "ignore")] Rc<MalClosure>),
     Atom(Rc<RefCell<MalType>>),
 }
 
+impl Display for MalType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", pr_str(self, PrintMode::Readable))
+    }
+}
+
 #[derive(Derivative)]
-#[derivative(Debug)]
+#[derivative(Debug, Clone)]
 pub struct MalClosure {
     // NOTE: this is here because core needs to call eval, which is different for each step
     #[derivative(Debug = "ignore")]
-    pub eval: fn(MalType, &Env) -> MalResult<MalType>,
+    pub eval: fn(&MalType, &Env) -> MalResult<MalType>,
     pub params: MalParams,
     pub outer: Env,
     pub body: MalType,
+    pub is_macro: bool,
 }
 
-#[derive(Debug)]
+impl MalClosure {
+    pub fn apply(&self, args: &[MalType]) -> MalResult<(MalType, Env)> {
+        let MalClosure {
+            params,
+            outer,
+            body,
+            ..
+        } = self;
+
+        let binds = params.bind(args)?;
+
+        Ok((body.clone(), Env::new(Some(outer.clone()), binds)))
+    }
+}
+
+impl Default for MalClosure {
+    fn default() -> Self {
+        Self {
+            eval: |_, _| panic!("Forgot to set eval in closure!"),
+            params: Default::default(),
+            outer: Default::default(),
+            body: Default::default(),
+            is_macro: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct MalParams {
     pub names: Vec<Rc<str>>,
     pub variadic: Option<Rc<str>>,
@@ -114,7 +153,7 @@ impl MalParams {
 
 #[macro_export]
 macro_rules! args {
-    ($pat:pat = $args:ident) => {
+    ($pat:pat = $args:expr) => {
         let $pat = $args else { return Err(MalError::WrongArgs) };
     };
 }
@@ -138,6 +177,10 @@ pub enum MalError {
     NotFound(Rc<str>),
     #[error(transparent)]
     IOError(std::io::Error),
+    #[error("index out of bounds")]
+    OutOfBounds,
+    #[error("uncaught exception: {0}")]
+    Exception(MalType),
 }
 
 impl From<MalType> for bool {

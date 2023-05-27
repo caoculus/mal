@@ -2,10 +2,10 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::types::MalType;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Env(Rc<EnvInner>);
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct EnvInner {
     bindings: RefCell<HashMap<Rc<str>, MalType>>,
     outer: Option<Env>,
@@ -32,11 +32,5 @@ impl Env {
             .get(key)
             .cloned()
             .or_else(|| self.0.outer.as_ref().and_then(|o| o.get(key)))
-    }
-}
-
-impl Default for Env {
-    fn default() -> Self {
-        Self::new(None, HashMap::new())
     }
 }

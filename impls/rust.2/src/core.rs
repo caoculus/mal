@@ -17,7 +17,7 @@ type MalFnPtr = fn(Args) -> MalRet;
 macro_rules! bin_op {
     ($op:tt, $ty:expr) => {
         move |args: &[MalType]| {
-            args!(&[MalType::Number(a), MalType::Number(b)] = args);
+            $crate::args!(&[MalType::Number(a), MalType::Number(b)] = args);
 
             Ok($ty(a $op b))
         }
@@ -41,15 +41,19 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         ("-", bin_op!(-, MalType::Number)),
         ("*", bin_op!(*, MalType::Number)),
         ("/", bin_op!(/, MalType::Number)),
-        ("list", list),
-        ("list?", is!(MalType::List(..))),
-        ("empty?", empty),
-        ("count", count),
-        ("=", equal),
         ("<", bin_op!(<, MalType::Bool)),
         ("<=", bin_op!(<=, MalType::Bool)),
         (">", bin_op!(>, MalType::Bool)),
         (">=", bin_op!(>=, MalType::Bool)),
+        ("list?", is!(MalType::List(..))),
+        ("nil?", is!(MalType::Nil)),
+        ("true?", is!(MalType::Bool(true))),
+        ("false?", is!(MalType::Bool(false))),
+        ("symbol?", is!(MalType::Symbol(..))),
+        ("list", list),
+        ("empty?", empty),
+        ("count", count),
+        ("=", equal),
         ("pr-str", print_pr_str),
         ("str", print_str),
         ("prn", prn),
@@ -65,6 +69,12 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         ("concat", concat),
         ("quasiquote", quasiquote),
         ("vec", vec),
+        ("nth", nth),
+        ("first", first),
+        ("rest", rest),
+        ("throw", throw),
+        ("apply", apply),
+        ("map", map),
     ]
 }
 
@@ -189,12 +199,13 @@ fn swap(args: Args) -> MalRet {
                 params,
                 outer,
                 body,
+                ..
             } = closure.as_ref();
 
             let binds = params.bind(&args)?;
             let env = Env::new(Some((*outer).clone()), binds);
 
-            eval(body.clone(), &env)?
+            eval(body, &env)?
         }
         _ => unreachable!(),
     };
@@ -282,4 +293,95 @@ fn vec(args: Args) -> MalRet {
     args!([MalType::List(list) | MalType::Vector(list)] = args);
 
     Ok(MalType::Vector(list.to_vec().into()))
+}
+
+fn nth(args: Args) -> MalRet {
+    args!(
+        [
+            MalType::List(list) | MalType::Vector(list),
+            MalType::Number(i)
+        ] = args
+    );
+
+    let i: usize = usize::try_from(*i).map_err(|_| MalError::OutOfBounds)?;
+    list.get(i).cloned().ok_or(MalError::OutOfBounds)
+}
+
+fn first(args: Args) -> MalRet {
+    'err: {
+        let [head] = args else { break 'err; };
+
+        let res = match head {
+            MalType::Nil => MalType::Nil,
+            MalType::List(list) | MalType::Vector(list) => {
+                list.first().cloned().unwrap_or(MalType::Nil)
+            }
+            _ => break 'err,
+        };
+
+        return Ok(res);
+    }
+
+    Err(MalError::WrongArgs)
+}
+
+fn rest(args: Args) -> MalRet {
+    'err: {
+        let [head] = args else { break 'err; };
+
+        let res = match head {
+            MalType::Nil => vec![],
+            MalType::List(list) | MalType::Vector(list) => list.iter().skip(1).cloned().collect(),
+            _ => break 'err,
+        };
+
+        return Ok(MalType::List(res.into()));
+    }
+
+    Err(MalError::WrongArgs)
+}
+
+fn throw(args: Args) -> MalRet {
+    args!([e] = args);
+    Err(MalError::Exception(e.clone()))
+}
+
+fn apply(args: Args) -> MalRet {
+    args!([f @ (MalType::Fn(..) | MalType::Closure(..)), mid @ .., MalType::List(list) | MalType::Vector(list)] = args);
+
+    let args = mid
+        .iter()
+        .cloned()
+        .chain(list.iter().cloned())
+        .collect_vec();
+
+    match f {
+        MalType::Fn(f) => f(&args),
+        MalType::Closure(closure) => {
+            let (ast, env) = closure.apply(&args)?;
+            (closure.eval)(&ast, &env)
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn map(args: Args) -> MalRet {
+    args!([f @ (MalType::Fn(..) | MalType::Closure(..)), MalType::List(list) | MalType::Vector(list)] = args);
+
+    let new_list = match f {
+        MalType::Fn(f) => list
+            .iter()
+            .map(|t| f(&[t.clone()]))
+            .collect::<MalResult<Vec<MalType>>>()?,
+        MalType::Closure(closure) => list
+            .iter()
+            .map(|t| {
+                let (ast, env) = closure.apply(&[t.clone()])?;
+                (closure.eval)(&ast, &env)
+            })
+            .collect::<MalResult<Vec<MalType>>>()?,
+        _ => unreachable!(),
+    };
+
+    Ok(MalType::List(new_list.into()))
 }

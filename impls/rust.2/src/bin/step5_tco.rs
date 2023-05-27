@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use rustyline::{error::ReadlineError, DefaultEditor};
-use std::{borrow::Cow, collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc};
 
 use mal::{
     env::Env,
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn rep(line: &str, repl_env: &Env) -> MalResult<String> {
     let ast = read_str(line)?;
-    let res = eval(ast, repl_env)?;
+    let res = eval(&ast, repl_env)?;
     Ok(pr_str(&res, PrintMode::Readable))
 }
 
@@ -62,8 +62,9 @@ fn base_env() -> Env {
     )
 }
 
-fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
-    let mut repl_env = Cow::Borrowed(repl_env);
+fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
+    let mut ast = ast.clone();
+    let mut repl_env = repl_env.clone();
 
     loop {
         match ast {
@@ -79,7 +80,7 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                             return Err(MalError::WrongArgs);
                         };
 
-                        let value = eval(expr.clone(), &repl_env)?;
+                        let value = eval(expr, &repl_env)?;
                         repl_env.set(name.clone(), value.clone());
 
                         return Ok(value);
@@ -93,19 +94,19 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                             return Err(MalError::WrongArgs);
                         }
 
-                        let new_env = Env::new(Some((*repl_env).clone()), HashMap::new());
+                        let new_env = Env::new(Some(repl_env.clone()), HashMap::new());
 
                         for (name, expr) in bindings.iter().tuples() {
                             let MalType::Symbol(name) = name else {
                                 return Err(MalError::WrongArgs);
                             };
 
-                            let value = eval(expr.clone(), &new_env)?;
+                            let value = eval(expr, &new_env)?;
 
                             new_env.set(name.clone(), value);
                         }
 
-                        (ast, repl_env) = (expr.clone(), Cow::Owned(new_env));
+                        (ast, repl_env) = (expr.clone(), new_env);
                     }
                     MalType::Symbol(s) if s.as_ref() == "do" => {
                         // tail must have at least one element
@@ -113,7 +114,7 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                             return Err(MalError::WrongArgs);
                         }
 
-                        for val in list[1..list.len() - 1].iter().cloned() {
+                        for val in &list[1..list.len() - 1] {
                             eval(val, &repl_env)?;
                         }
 
@@ -128,7 +129,7 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                             _ => return Err(MalError::WrongArgs),
                         };
 
-                        let cond_res = eval(cond.clone(), &repl_env)?;
+                        let cond_res = eval(cond, &repl_env)?;
 
                         ast = if cond_res.into() {
                             t_branch.clone()
@@ -144,9 +145,10 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                         let params = MalParams::new(binds)?;
                         return Ok(MalType::Closure(Rc::new(MalClosure {
                             params,
-                            outer: (*repl_env).clone(),
+                            outer: repl_env,
                             body: body.clone(),
                             eval,
+                            ..Default::default()
                         })));
                     }
                     _ => {
@@ -168,10 +170,8 @@ fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                                 } = closure.as_ref();
                                 let binds = params.bind(args)?;
 
-                                (ast, repl_env) = (
-                                    body.clone(),
-                                    Cow::Owned(Env::new(Some(outer.clone()), binds)),
-                                );
+                                (ast, repl_env) =
+                                    (body.clone(), Env::new(Some(outer.clone()), binds));
                             }
                             _ => return Err(MalError::InvalidHead),
                         };
@@ -190,20 +190,17 @@ fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
             .ok_or_else(|| MalError::NotFound(s.clone())),
         MalType::List(l) => Ok(MalType::List(Rc::new(
             l.iter()
-                .cloned()
                 .map(|t| eval(t, repl_env))
                 .collect::<MalResult<Vec<_>>>()?,
         ))),
         MalType::Vector(v) => Ok(MalType::Vector(Rc::new(
             v.iter()
-                .cloned()
                 .map(|t| eval(t, repl_env))
                 .collect::<MalResult<Vec<_>>>()?,
         ))),
         MalType::Hashmap(h) => Ok(MalType::Hashmap(Rc::new(
             h.iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .map(|(k, v)| eval(v, repl_env).map(|v| (k, v)))
+                .map(|(k, v)| eval(v, repl_env).map(|v| (k.clone(), v)))
                 .collect::<MalResult<HashMap<_, _>>>()?,
         ))),
         val => Ok(val),

@@ -14,6 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repl_env = base_env();
 
     define_additional(&repl_env);
+
     if check_cmd_args(&repl_env)?.is_break() {
         return Ok(());
     }
@@ -96,6 +97,7 @@ fn define_additional(repl_env: &Env) {
         repl_env,
     )
     .unwrap();
+    rep("(defmacro! cond (fn* (& xs) (if (> (count xs) 0) (list 'if (first xs) (if (> (count xs) 1) (nth xs 1) (throw \"odd number of forms to cond\")) (cons 'cond (rest (rest xs)))))))", repl_env).unwrap();
 }
 
 fn eval_fn(repl_env: Env) -> MalFn {
@@ -111,6 +113,8 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
     let mut ast = ast.clone();
 
     'outer: loop {
+        ast = macro_expand(&ast, &repl_env)?;
+
         'list: {
             let (MalType::List(ref list) | MalType::Vector(ref list)) = ast else { break 'list; };
             let [head, tail @ ..] = &list[..] else { return Ok(ast); };
@@ -154,6 +158,29 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
 
                         return Ok(value);
                     }
+                    "defmacro!" => {
+                        args!([MalType::Symbol(name), expr] = tail);
+
+                        let value = eval(expr, &repl_env)?;
+                        args!(MalType::Closure(ref closure) = value);
+
+                        let macro_closure = MalType::Closure(
+                            MalClosure {
+                                is_macro: true,
+                                ..(**closure).clone()
+                            }
+                            .into(),
+                        );
+                        repl_env.set(name.clone(), macro_closure);
+
+                        return Ok(MalType::Closure(
+                            MalClosure {
+                                is_macro: true,
+                                ..(**closure).clone()
+                            }
+                            .into(),
+                        ));
+                    }
                     "let*" => {
                         args!([MalType::List(bindings) | MalType::Vector(bindings), expr] = tail);
 
@@ -176,7 +203,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                     "do" => {
                         args!([mid @ .., last] = tail);
 
-                        for val in mid {
+                        for val in mid.iter() {
                             eval(val, &repl_env)?;
                         }
 
@@ -214,6 +241,28 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                             .into(),
                         ));
                     }
+                    "try*" => {
+                        args!([body, MalType::List(catch)] = tail);
+                        args!([MalType::Symbol(s), MalType::Symbol(bind), catch_body] = &catch[..]);
+                        if &s[..] != "catch*" {
+                            return Err(MalError::WrongArgs);
+                        }
+
+                        let res = eval(body, &repl_env);
+                        let e = match res {
+                            Ok(res) => return Ok(res),
+                            Err(MalError::Exception(e)) => e,
+                            e => return e,
+                        };
+
+                        let new_env = Env::new(Some(repl_env), [(bind.clone(), e)].into());
+                        (ast, repl_env) = (catch_body.clone(), new_env);
+                    }
+                    "macroexpand" => {
+                        args!([ast] = tail);
+
+                        return macro_expand(ast, &repl_env);
+                    }
                     _ => break 'sym,
                 }
 
@@ -231,15 +280,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
             match head {
                 MalType::Fn(f) => return f(tail),
                 MalType::Closure(closure) => {
-                    let MalClosure {
-                        params,
-                        outer,
-                        body,
-                        ..
-                    } = closure.as_ref();
-                    let binds = params.bind(tail)?;
-
-                    (ast, repl_env) = (body.clone(), Env::new(Some(outer.clone()), binds));
+                    (ast, repl_env) = closure.apply(tail)?;
                 }
                 _ => return Err(MalError::InvalidHead),
             };
@@ -276,6 +317,25 @@ fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
         )),
         val => Ok(val),
     }
+}
+
+fn macro_expand(ast: &MalType, env: &Env) -> MalResult<MalType> {
+    let mut ast = ast.clone();
+
+    loop {
+        let MalType::List(list) = &ast else { break; };
+        let [MalType::Symbol(s), tail @ ..] = &list[..] else { break; };
+        let Some(MalType::Closure(closure)) = env.get(s) else { break; };
+
+        if !closure.is_macro {
+            break;
+        }
+
+        let (cl_ast, cl_env) = closure.apply(tail)?;
+        ast = eval(&cl_ast, &cl_env)?;
+    }
+
+    Ok(ast)
 }
 
 #[test]
