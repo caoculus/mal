@@ -154,6 +154,17 @@ where
                             MalType::Symbol(symbol.into()),
                             tail,
                         ])));
+                    } else if *other == "^" {
+                        self.tokens.next();
+
+                        let first = self.read_form()?;
+                        let second = self.read_form()?;
+
+                        return Ok(MalType::List(Rc::new(vec![
+                            MalType::Symbol("with-meta".into()),
+                            second,
+                            first,
+                        ])));
                     }
                 }
 
