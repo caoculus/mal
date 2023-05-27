@@ -109,169 +109,145 @@ fn eval_fn(repl_env: Env) -> MalFn {
 fn eval(mut ast: MalType, repl_env: &Env) -> MalResult<MalType> {
     let mut repl_env = Cow::Borrowed(repl_env);
 
-    loop {
-        match ast {
-            MalType::List(ref list) => {
-                let [head, tail @ ..] = &list[..] else {
-                    // empty list
-                    return Ok(ast);
-                };
+    'outer: loop {
+        'list: {
+            let (MalType::List(ref list) | MalType::Vector(ref list)) = ast else { break 'list; };
+            let [head, tail @ ..] = &list[..] else { return Ok(ast); };
 
-                // deal with symbol cases first
-                if let MalType::Symbol(s) = head {
-                    match &s[..] {
-                        "def!" => {
-                            args!([MalType::Symbol(name), expr] = tail);
+            'quote: {
+                let MalType::Symbol(sym) = head else { break 'quote; };
 
-                            let value = eval(expr.clone(), &repl_env)?;
-                            repl_env.set(name.clone(), value.clone());
+                match &sym[..] {
+                    "quote" => {
+                        args!([val] = tail);
 
-                            return Ok(value);
-                        }
-                        "let*" => {
-                            args!(
-                                [MalType::List(bindings) | MalType::Vector(bindings), expr] = tail
-                            );
-
-                            if bindings.len() % 2 != 0 {
-                                return Err(MalError::WrongArgs);
-                            }
-
-                            let new_env = Env::new(Some((*repl_env).clone()), HashMap::new());
-
-                            for (name, expr) in bindings.iter().tuples() {
-                                args!(MalType::Symbol(name) = name);
-
-                                let value = eval(expr.clone(), &new_env)?;
-
-                                new_env.set(name.clone(), value);
-                            }
-
-                            (ast, repl_env) = (expr.clone(), Cow::Owned(new_env));
-                            continue;
-                        }
-                        "do" => {
-                            args!([mid @ .., last] = tail);
-
-                            for val in mid.iter().cloned() {
-                                eval(val, &repl_env)?;
-                            }
-
-                            ast = last.clone();
-                            continue;
-                        }
-                        "if" => {
-                            // if branch is allowed to skip its false branch
-                            // in which case, the false branch is simply nil
-                            let (cond, t_branch, f_branch) = match tail {
-                                [cond, t_branch] => (cond, t_branch, &MalType::Nil),
-                                [cond, t_branch, f_branch] => (cond, t_branch, f_branch),
-                                _ => return Err(MalError::WrongArgs),
-                            };
-
-                            let cond_res = eval(cond.clone(), &repl_env)?;
-
-                            ast = if cond_res.into() {
-                                t_branch.clone()
-                            } else {
-                                f_branch.clone()
-                            };
-                            continue;
-                        }
-                        "fn*" => {
-                            args!([MalType::List(binds) | MalType::Vector(binds), body] = tail);
-
-                            let params = MalParams::new(binds)?;
-                            return Ok(MalType::Closure(
-                                MalClosure {
-                                    params,
-                                    outer: (*repl_env).clone(),
-                                    body: body.clone(),
-                                    eval,
-                                }
-                                .into(),
-                            ));
-                        }
-                        "quote" => {
-                            args!([val] = tail);
-
-                            return Ok(val.clone());
-                        }
-                        "quasiquoteexpand" => {
-                            args!(val @ &[_] = tail);
-
-                            return mal::core::quasiquote(val);
-                        }
-                        "quasiquote" => {
-                            args!(val @ &[_] = tail);
-
-                            ast = mal::core::quasiquote(val)?;
-                            continue;
-                        }
-                        _ => {}
+                        return Ok(val.clone());
                     }
+                    "quasiquoteexpand" => {
+                        args!(val @ &[_] = tail);
+
+                        return mal::core::quasiquote(val);
+                    }
+                    "quasiquote" => {
+                        args!(val @ &[_] = tail);
+
+                        ast = mal::core::quasiquote(val)?;
+                    }
+                    _ => break 'quote,
                 }
 
-                let MalType::List(list) = eval_ast(MalType::List(list.clone()), &repl_env)? else {
-                    unreachable!("eval_ast should return a list")
-                };
-
-                let [head, tail @ ..] = &list[..] else {
-                    unreachable!("list should not be empty")
-                };
-
-                match head {
-                    MalType::Fn(f) => return f(tail),
-                    MalType::Closure(closure) => {
-                        let MalClosure {
-                            params,
-                            outer,
-                            body,
-                            ..
-                        } = closure.as_ref();
-                        let binds = params.bind(tail)?;
-
-                        (ast, repl_env) = (
-                            body.clone(),
-                            Cow::Owned(Env::new(Some(outer.clone()), binds)),
-                        );
-                        continue;
-                    }
-                    _ => return Err(MalError::InvalidHead),
-                };
+                continue 'outer;
             }
-            MalType::Vector(ref list) => {
-                let [head, tail @ ..] = &list[..] else {
-                    // empty list
-                    return Ok(ast);
-                };
 
-                if let MalType::Symbol(s) = head {
-                    match &s[..] {
-                        "quote" => {
-                            args!([val] = tail);
+            let MalType::List(..) = ast else { break 'list; };
 
-                            return Ok(val.clone());
-                        }
-                        "quasiquoteexpand" => {
-                            args!(val @ &[_] = tail);
-                            assert!(!val.is_empty());
+            'sym: {
+                let MalType::Symbol(sym) = head else { break 'sym; };
 
-                            return mal::core::quasiquote(val);
-                        }
-                        "quasiquote" => {
-                            args!(val @ &[_] = tail);
-                            assert!(!val.is_empty());
+                match &sym[..] {
+                    "def!" => {
+                        args!([MalType::Symbol(name), expr] = tail);
 
-                            ast = mal::core::quasiquote(val)?;
-                            continue;
-                        }
-                        _ => {}
+                        let value = eval(expr.clone(), &repl_env)?;
+                        repl_env.set(name.clone(), value.clone());
+
+                        return Ok(value);
                     }
+                    "let*" => {
+                        args!([MalType::List(bindings) | MalType::Vector(bindings), expr] = tail);
+
+                        if bindings.len() % 2 != 0 {
+                            return Err(MalError::WrongArgs);
+                        }
+
+                        let new_env = Env::new(Some((*repl_env).clone()), HashMap::new());
+
+                        for (name, expr) in bindings.iter().tuples() {
+                            args!(MalType::Symbol(name) = name);
+
+                            let value = eval(expr.clone(), &new_env)?;
+
+                            new_env.set(name.clone(), value);
+                        }
+
+                        (ast, repl_env) = (expr.clone(), Cow::Owned(new_env));
+                    }
+                    "do" => {
+                        args!([mid @ .., last] = tail);
+
+                        for val in mid.iter().cloned() {
+                            eval(val, &repl_env)?;
+                        }
+
+                        ast = last.clone();
+                    }
+                    "if" => {
+                        // if branch is allowed to skip its false branch
+                        // in which case, the false branch is simply nil
+                        let (cond, t_branch, f_branch) = match tail {
+                            [cond, t_branch] => (cond, t_branch, &MalType::Nil),
+                            [cond, t_branch, f_branch] => (cond, t_branch, f_branch),
+                            _ => return Err(MalError::WrongArgs),
+                        };
+
+                        let cond_res = eval(cond.clone(), &repl_env)?;
+
+                        ast = if cond_res.into() {
+                            t_branch.clone()
+                        } else {
+                            f_branch.clone()
+                        };
+                    }
+                    "fn*" => {
+                        args!([MalType::List(binds) | MalType::Vector(binds), body] = tail);
+
+                        let params = MalParams::new(binds)?;
+                        return Ok(MalType::Closure(
+                            MalClosure {
+                                params,
+                                outer: (*repl_env).clone(),
+                                body: body.clone(),
+                                eval,
+                            }
+                            .into(),
+                        ));
+                    }
+                    _ => break 'sym,
                 }
+
+                continue 'outer;
             }
-            _ => {}
+
+            let MalType::List(list) = eval_ast(MalType::List(list.clone()), &repl_env)? else {
+                unreachable!("eval_ast should return a list")
+            };
+
+            let [head, tail @ ..] = &list[..] else {
+                unreachable!("list should not be empty")
+            };
+
+            match head {
+                MalType::Fn(f) => return f(tail),
+                MalType::Closure(closure) => {
+                    let MalClosure {
+                        params,
+                        outer,
+                        body,
+                        ..
+                    } = closure.as_ref();
+                    let binds = params.bind(tail)?;
+
+                    (ast, repl_env) = (
+                        body.clone(),
+                        Cow::Owned(Env::new(Some(outer.clone()), binds)),
+                    );
+                }
+                _ => return Err(MalError::InvalidHead),
+            };
+
+            continue 'outer;
         }
+
         return eval_ast(ast, &repl_env);
     }
 }
