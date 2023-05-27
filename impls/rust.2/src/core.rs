@@ -5,6 +5,7 @@ use crate::{
 use std::{cell::RefCell, collections::HashMap, iter, rc::Rc};
 
 use itertools::Itertools;
+use rustyline::{error::ReadlineError, DefaultEditor};
 
 use crate::{
     env::Env,
@@ -94,6 +95,7 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         ("contains?", contains),
         ("keys", keys),
         ("vals", vals),
+        ("readline", readline),
     ]
 }
 
@@ -526,4 +528,23 @@ fn keys(args: Args) -> MalRet {
 fn vals(args: Args) -> MalRet {
     try_let!([MalType::Hashmap(map)] = args, "vals expects a hashmap");
     Ok(MalType::List(map.values().cloned().collect_vec().into()))
+}
+
+fn readline(args: Args) -> MalRet {
+    try_let!([MalType::String(s)] = args, "readline expects a string");
+    if is_keyword_str(s) {
+        error!("readline prompt cannot be a keyword");
+    };
+
+    let Ok(mut rl) = DefaultEditor::new() else {
+        error!("Could not open terminal");
+    };
+
+    let res = match rl.readline(s) {
+        Ok(line) => MalType::String(line.into()),
+        Err(ReadlineError::Interrupted) => MalType::Nil,
+        e => error!("Read error: {e:?}"),
+    };
+
+    Ok(res)
 }
