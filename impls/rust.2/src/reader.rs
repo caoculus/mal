@@ -1,13 +1,9 @@
 use std::{collections::HashMap, iter::Peekable, rc::Rc};
 
-use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use regex::Regex;
 
-use crate::{
-    error,
-    types::{MalError, MalResult, MalType, KEYWORD_PREFIX},
-};
+use crate::types::{hashmap_pairs, MalError, MalResult, MalType, KEYWORD_PREFIX};
 
 pub fn read_str(text: &str) -> MalResult<MalType> {
     let mut reader = Reader::new(tokenize(text));
@@ -171,23 +167,9 @@ where
 
     fn parse_list(list: Vec<MalType>, pair: Pair) -> MalResult<MalType> {
         match pair {
-            Pair::Brace => {
-                if list.len() % 2 != 0 {
-                    error!("hashmap has odd length")
-                }
-
-                list.into_iter()
-                    .tuples()
-                    .map(|(k, v)| {
-                        let MalType::String(k) = k else {
-                            error!("expected string key for hashmap, found {k}")
-                        };
-
-                        Ok((k, v))
-                    })
-                    .collect::<MalResult<HashMap<_, _>>>()
-                    .map(|h| MalType::Hashmap(Rc::new(h)))
-            }
+            Pair::Brace => hashmap_pairs(list.into_iter())
+                .collect::<MalResult<HashMap<_, _>>>()
+                .map(|m| MalType::Hashmap(m.into())),
             Pair::Bracket => Ok(MalType::Vector(Rc::new(list))),
             Pair::Parenthesis => Ok(MalType::List(Rc::new(list))),
         }

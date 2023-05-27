@@ -273,7 +273,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         let e = match res {
                             Ok(res) => return Ok(res),
                             Err(MalError::Exception(e)) => e,
-                            e => return e,
+                            Err(e) => MalType::String(e.to_string().into()),
                         };
 
                         let new_env = Env::new(Some(repl_env), [(bind.clone(), e)].into());

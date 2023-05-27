@@ -1,5 +1,8 @@
-use crate::{error, try_let, types::MalResult};
-use std::{cell::RefCell, iter, rc::Rc};
+use crate::{
+    error, try_let,
+    types::{hashmap_pairs, MalResult, KEYWORD_PREFIX},
+};
+use std::{cell::RefCell, collections::HashMap, iter, rc::Rc};
 
 use itertools::Itertools;
 
@@ -27,11 +30,11 @@ macro_rules! bin_op {
 }
 
 macro_rules! is {
-    ($name:literal, $pat:pat) => {
+    ($name:literal, $(|)? $( $pattern:pat_param )|+ $( if $guard: expr )? $(,)?) => {
         ($name, move |args: &[MalType]| {
             $crate::try_let!([first] = args, "{} expects 1 argument", $name);
 
-            Ok(MalType::Bool(matches!(first, $pat)))
+            Ok(MalType::Bool(matches!(first, $( $pattern )|+ $( if $guard )?)))
         })
     };
 }
@@ -53,6 +56,10 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         is!("false?", MalType::Bool(false)),
         is!("symbol?", MalType::Symbol(..)),
         is!("atom?", MalType::Atom(..)),
+        is!("keyword?", MalType::String(s) if is_keyword_str(s)),
+        is!("vector?", MalType::Vector(..)),
+        is!("sequential?", MalType::List(..) | MalType::Vector(..)),
+        is!("map?", MalType::Hashmap(..)),
         ("list", list),
         ("empty?", empty),
         ("count", count),
@@ -77,7 +84,21 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         ("throw", throw),
         ("apply", apply),
         ("map", map),
+        ("symbol", symbol),
+        ("keyword", keyword),
+        ("vector", vector),
+        ("hash-map", hashmap),
+        ("assoc", assoc),
+        ("dissoc", dissoc),
+        ("get", get),
+        ("contains?", contains),
+        ("keys", keys),
+        ("vals", vals),
     ]
+}
+
+fn is_keyword_str(s: &str) -> bool {
+    s.starts_with(KEYWORD_PREFIX)
 }
 
 fn list(args: Args) -> MalRet {
@@ -394,4 +415,115 @@ fn map(args: Args) -> MalRet {
     };
 
     Ok(MalType::List(new_list.into()))
+}
+
+fn symbol(args: Args) -> MalRet {
+    try_let!([MalType::String(s)] = args, "symbol expects a string");
+    if is_keyword_str(s) {
+        error!("Cannot define keyword using symbol {s}")
+    }
+
+    Ok(MalType::Symbol(s.clone()))
+}
+
+fn keyword(args: Args) -> MalRet {
+    try_let!([MalType::String(s)] = args, "keyword expects a string");
+
+    let res = if is_keyword_str(s) {
+        s.clone()
+    } else {
+        Rc::from(
+            std::iter::once(KEYWORD_PREFIX)
+                .chain(s.chars())
+                .collect::<String>(),
+        )
+    };
+
+    Ok(MalType::String(res))
+}
+
+fn vector(args: Args) -> MalRet {
+    Ok(MalType::Vector(args.to_vec().into()))
+}
+
+fn hashmap(args: Args) -> MalRet {
+    hashmap_pairs(args.iter().cloned())
+        .collect::<MalResult<HashMap<_, _>>>()
+        .map(|m| MalType::Hashmap(m.into()))
+}
+
+fn assoc(args: Args) -> MalRet {
+    try_let!(
+        [MalType::Hashmap(map), tail @ ..] = args,
+        "assoc expects a hashmap and arguments"
+    );
+
+    let mut new_map = (**map).clone();
+
+    for pair in hashmap_pairs(tail.iter().cloned()) {
+        let (k, v) = pair?;
+        new_map.insert(k, v);
+    }
+
+    Ok(MalType::Hashmap(new_map.into()))
+}
+
+fn dissoc(args: Args) -> MalRet {
+    try_let!(
+        [MalType::Hashmap(map), tail @ ..] = args,
+        "dissoc expects a hashmap and a arguments"
+    );
+
+    let mut new_map = (**map).clone();
+    for elt in tail {
+        try_let!(
+            MalType::String(s) = elt,
+            "dissoc list expects string keys, found {elt}"
+        );
+        new_map.remove(s);
+    }
+
+    Ok(MalType::Hashmap(new_map.into()))
+}
+
+fn get(args: Args) -> MalRet {
+    // TODO: test expects this to pass with nil
+    // make the same change for other functions too?
+    try_let!(
+        [map @ (MalType::Hashmap(..) | MalType::Nil), MalType::String(key)] = args,
+        "get expects hashmap or nil and string key"
+    );
+
+    let res = match map {
+        MalType::Hashmap(map) => map.get(key).cloned().unwrap_or(MalType::Nil),
+        MalType::Nil => MalType::Nil,
+        _ => unreachable!(),
+    };
+
+    Ok(res)
+}
+
+fn contains(args: Args) -> MalRet {
+    try_let!(
+        [MalType::Hashmap(map), MalType::String(key)] = args,
+        "contains? expects hashmap and string key"
+    );
+
+    Ok(MalType::Bool(map.contains_key(key)))
+}
+
+fn keys(args: Args) -> MalRet {
+    try_let!([MalType::Hashmap(map)] = args, "keys expects a hashmap");
+    Ok(MalType::List(
+        map.keys()
+            .cloned()
+            .map(MalType::String)
+            .collect_vec()
+            .into(),
+    ))
+}
+
+fn vals(args: Args) -> MalRet {
+    try_let!([MalType::Hashmap(map)] = args, "vals expects a hashmap");
+    Ok(MalType::List(map.values().cloned().collect_vec().into()))
 }

@@ -1,6 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
 
 use derivative::Derivative;
+use itertools::{Either, Itertools};
 use thiserror::Error;
 
 use crate::{
@@ -49,13 +50,14 @@ pub enum MalError {
     String(String),
     #[error("head of list cannot be evaluated (not a function or special keyword)")]
     InvalidHead,
-    #[error("'{0}' not found.")]
+    // NOTE: to be phased out
+    #[error("'{0}' not found")]
     NotFound(Rc<str>),
     #[error(transparent)]
     IOError(std::io::Error),
     #[error("index {found} is out of bounds for length {max}")]
     OutOfBounds { max: usize, found: i64 },
-    #[error("uncaught exception: {0}")]
+    #[error("Exception: {0}")]
     Exception(MalType),
 }
 
@@ -73,6 +75,24 @@ macro_rules! try_let {
     ($pat:pat = $args:expr, $($arg:tt)*) => {
         let $pat = $args else { $crate::error!($($arg)*) };
     };
+}
+
+pub(crate) fn hashmap_pairs(
+    iter: impl ExactSizeIterator<Item = MalType>,
+) -> impl Iterator<Item = MalResult<(Rc<str>, MalType)>> {
+    if iter.len() % 2 != 0 {
+        return Either::Left(std::iter::once_with(|| {
+            error!("hashmap bindings have odd length")
+        }));
+    }
+
+    Either::Right(iter.tuples().map(|(k, v)| {
+        let MalType::String(k) = k else {
+                error!("expected string key for hashmap, found {k}")
+            };
+
+        Ok((k, v))
+    }))
 }
 
 impl Display for MalType {
