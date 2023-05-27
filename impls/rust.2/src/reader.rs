@@ -4,7 +4,10 @@ use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use regex::Regex;
 
-use crate::types::{MalError, MalResult, MalType, KEYWORD_PREFIX};
+use crate::{
+    error,
+    types::{MalError, MalResult, MalType, KEYWORD_PREFIX},
+};
 
 pub fn read_str(text: &str) -> MalResult<MalType> {
     let mut reader = Reader::new(tokenize(text));
@@ -170,14 +173,14 @@ where
         match pair {
             Pair::Brace => {
                 if list.len() % 2 != 0 {
-                    return Err(MalError::InvalidHashmap);
+                    error!("hashmap has odd length")
                 }
 
                 list.into_iter()
                     .tuples()
                     .map(|(k, v)| {
                         let MalType::String(k) = k else {
-                            return Err(MalError::InvalidHashmap);
+                            error!("expected string key for hashmap, found {k}")
                         };
 
                         Ok((k, v))

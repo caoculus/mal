@@ -3,10 +3,10 @@ use rustyline::{error::ReadlineError, DefaultEditor};
 use std::{collections::HashMap, ops::ControlFlow, rc::Rc};
 
 use mal::{
-    args,
     env::Env,
     printer::{pr_str, PrintMode},
     reader::read_str,
+    try_let,
     types::{MalClosure, MalError, MalFn, MalParams, MalResult, MalType},
 };
 
@@ -124,17 +124,17 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
 
                 match &sym[..] {
                     "quote" => {
-                        args!([val] = tail);
+                        try_let!([val] = tail);
 
                         return Ok(val.clone());
                     }
                     "quasiquoteexpand" => {
-                        args!(val @ &[_] = tail);
+                        try_let!(val @ &[_] = tail);
 
                         return mal::core::quasiquote(val);
                     }
                     "quasiquote" => {
-                        args!(val @ &[_] = tail);
+                        try_let!(val @ &[_] = tail);
 
                         ast = mal::core::quasiquote(val)?;
                     }
@@ -151,7 +151,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
 
                 match &sym[..] {
                     "def!" => {
-                        args!([MalType::Symbol(name), expr] = tail);
+                        try_let!([MalType::Symbol(name), expr] = tail);
 
                         let value = eval(expr, &repl_env)?;
                         repl_env.set(name.clone(), value.clone());
@@ -159,10 +159,10 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         return Ok(value);
                     }
                     "defmacro!" => {
-                        args!([MalType::Symbol(name), expr] = tail);
+                        try_let!([MalType::Symbol(name), expr] = tail);
 
                         let value = eval(expr, &repl_env)?;
-                        args!(MalType::Closure(ref closure) = value);
+                        try_let!(MalType::Closure(ref closure) = value);
 
                         let macro_closure = MalType::Closure(
                             MalClosure {
@@ -182,7 +182,9 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         ));
                     }
                     "let*" => {
-                        args!([MalType::List(bindings) | MalType::Vector(bindings), expr] = tail);
+                        try_let!(
+                            [MalType::List(bindings) | MalType::Vector(bindings), expr] = tail
+                        );
 
                         if bindings.len() % 2 != 0 {
                             return Err(MalError::WrongArgs);
@@ -191,7 +193,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         let new_env = Env::new(Some(repl_env), HashMap::new());
 
                         for (name, expr) in bindings.iter().tuples() {
-                            args!(MalType::Symbol(name) = name);
+                            try_let!(MalType::Symbol(name) = name);
 
                             let value = eval(expr, &new_env)?;
 
@@ -201,7 +203,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         (ast, repl_env) = (expr.clone(), new_env);
                     }
                     "do" => {
-                        args!([mid @ .., last] = tail);
+                        try_let!([mid @ .., last] = tail);
 
                         for val in mid.iter() {
                             eval(val, &repl_env)?;
@@ -227,7 +229,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         };
                     }
                     "fn*" => {
-                        args!([MalType::List(binds) | MalType::Vector(binds), body] = tail);
+                        try_let!([MalType::List(binds) | MalType::Vector(binds), body] = tail);
 
                         let params = MalParams::new(binds)?;
                         return Ok(MalType::Closure(
@@ -242,7 +244,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         ));
                     }
                     "macroexpand" => {
-                        args!([ast] = tail);
+                        try_let!([ast] = tail);
 
                         return macro_expand(ast, &repl_env);
                     }

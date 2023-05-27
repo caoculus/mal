@@ -31,6 +31,50 @@ pub enum MalType {
     Atom(Rc<RefCell<MalType>>),
 }
 
+#[derive(Debug, Error)]
+pub enum MalError {
+    #[error("unbalanced")]
+    UnbalancedString,
+    #[error("EOF")]
+    Eof,
+    #[error("invalid hashmap")]
+    InvalidHashmap,
+    #[error("")]
+    Comment,
+    // NOTE: this stays as a default for the earlier steps, too lazy to change all the places where
+    // this is used
+    #[error("invalid arguments")]
+    WrongArgs,
+    #[error("{0}")]
+    String(String),
+    #[error("head of list cannot be evaluated (not a function or special keyword)")]
+    InvalidHead,
+    #[error("'{0}' not found.")]
+    NotFound(Rc<str>),
+    #[error(transparent)]
+    IOError(std::io::Error),
+    #[error("index {found} is out of bounds for length {max}")]
+    OutOfBounds { max: usize, found: i64 },
+    #[error("uncaught exception: {0}")]
+    Exception(MalType),
+}
+
+#[macro_export]
+macro_rules! error {
+    () => { return Err(MalError::WrongArgs) };
+    ($($arg:tt)*) => { return Err(MalError::String(format!($($arg)*))) };
+}
+
+#[macro_export]
+macro_rules! try_let {
+    ($pat:pat = $args:expr) => {
+        let $pat = $args else { $crate::error!() };
+    };
+    ($pat:pat = $args:expr, $($arg:tt)*) => {
+        let $pat = $args else { $crate::error!($($arg)*) };
+    };
+}
+
 impl Display for MalType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", pr_str(self, PrintMode::Readable))
@@ -149,38 +193,6 @@ impl MalParams {
             }
         }
     }
-}
-
-#[macro_export]
-macro_rules! args {
-    ($pat:pat = $args:expr) => {
-        let $pat = $args else { return Err(MalError::WrongArgs) };
-    };
-}
-
-#[derive(Debug, Error)]
-pub enum MalError {
-    #[error("unbalanced")]
-    UnbalancedString,
-    #[error("EOF")]
-    Eof,
-    #[error("invalid hashmap")]
-    InvalidHashmap,
-    #[error("")]
-    Comment,
-    // TODO: change this to take a string
-    #[error("invalid arguments")]
-    WrongArgs,
-    #[error("head of list cannot be evaluated (not a function or special keyword)")]
-    InvalidHead,
-    #[error("'{0}' not found.")]
-    NotFound(Rc<str>),
-    #[error(transparent)]
-    IOError(std::io::Error),
-    #[error("index out of bounds")]
-    OutOfBounds,
-    #[error("uncaught exception: {0}")]
-    Exception(MalType),
 }
 
 impl From<MalType> for bool {

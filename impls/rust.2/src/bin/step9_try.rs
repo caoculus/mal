@@ -3,10 +3,11 @@ use rustyline::{error::ReadlineError, DefaultEditor};
 use std::{collections::HashMap, ops::ControlFlow, rc::Rc};
 
 use mal::{
-    args,
     env::Env,
+    error,
     printer::{pr_str, PrintMode},
     reader::read_str,
+    try_let,
     types::{MalClosure, MalError, MalFn, MalParams, MalResult, MalType},
 };
 
@@ -124,17 +125,17 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
 
                 match &sym[..] {
                     "quote" => {
-                        args!([val] = tail);
+                        try_let!([val] = tail, "quote expects 1 argument",);
 
                         return Ok(val.clone());
                     }
                     "quasiquoteexpand" => {
-                        args!(val @ &[_] = tail);
+                        try_let!(val @ &[_] = tail, "quasiquoteexpand expected 1 argument");
 
                         return mal::core::quasiquote(val);
                     }
                     "quasiquote" => {
-                        args!(val @ &[_] = tail);
+                        try_let!(val @ &[_] = tail, "quasiquote expected 1 argument");
 
                         ast = mal::core::quasiquote(val)?;
                     }
@@ -151,7 +152,10 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
 
                 match &sym[..] {
                     "def!" => {
-                        args!([MalType::Symbol(name), expr] = tail);
+                        try_let!(
+                            [MalType::Symbol(name), expr] = tail,
+                            "def! expects a symbol and an expression"
+                        );
 
                         let value = eval(expr, &repl_env)?;
                         repl_env.set(name.clone(), value.clone());
@@ -159,10 +163,13 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         return Ok(value);
                     }
                     "defmacro!" => {
-                        args!([MalType::Symbol(name), expr] = tail);
+                        try_let!(
+                            [MalType::Symbol(name), expr] = tail,
+                            "defmacro! expects a symbol and an expression"
+                        );
 
                         let value = eval(expr, &repl_env)?;
-                        args!(MalType::Closure(ref closure) = value);
+                        try_let!(MalType::Closure(ref closure) = value, "defmacro! expected {name} to evaluate to a closure, found {value}");
 
                         let macro_closure = MalType::Closure(
                             MalClosure {
@@ -182,16 +189,19 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         ));
                     }
                     "let*" => {
-                        args!([MalType::List(bindings) | MalType::Vector(bindings), expr] = tail);
+                        try_let!(
+                            [MalType::List(bindings) | MalType::Vector(bindings), expr] = tail,
+                            "let* expects list of bindings and expression"
+                        );
 
                         if bindings.len() % 2 != 0 {
-                            return Err(MalError::WrongArgs);
+                            error!("let* binding list must have even length")
                         }
 
                         let new_env = Env::new(Some(repl_env), HashMap::new());
 
                         for (name, expr) in bindings.iter().tuples() {
-                            args!(MalType::Symbol(name) = name);
+                            try_let!(MalType::Symbol(name) = name);
 
                             let value = eval(expr, &new_env)?;
 
@@ -201,7 +211,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         (ast, repl_env) = (expr.clone(), new_env);
                     }
                     "do" => {
-                        args!([mid @ .., last] = tail);
+                        try_let!([mid @ .., last] = tail, "do expects non-empty arguments list");
 
                         for val in mid.iter() {
                             eval(val, &repl_env)?;
@@ -215,7 +225,9 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         let (cond, t_branch, f_branch) = match tail {
                             [cond, t_branch] => (cond, t_branch, &MalType::Nil),
                             [cond, t_branch, f_branch] => (cond, t_branch, f_branch),
-                            _ => return Err(MalError::WrongArgs),
+                            _ => error!(
+                                "if expects condition, true branch, and optional false branch"
+                            ),
                         };
 
                         let cond_res = eval(cond, &repl_env)?;
@@ -227,7 +239,10 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         };
                     }
                     "fn*" => {
-                        args!([MalType::List(binds) | MalType::Vector(binds), body] = tail);
+                        try_let!(
+                            [MalType::List(binds) | MalType::Vector(binds), body] = tail,
+                            "fn* expects binding list and body"
+                        );
 
                         let params = MalParams::new(binds)?;
                         return Ok(MalType::Closure(
@@ -242,10 +257,16 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         ));
                     }
                     "try*" => {
-                        args!([body, MalType::List(catch)] = tail);
-                        args!([MalType::Symbol(s), MalType::Symbol(bind), catch_body] = &catch[..]);
+                        try_let!(
+                            [body, MalType::List(catch)] = tail,
+                            "try* expects body and catch body"
+                        );
+                        try_let!(
+                            [MalType::Symbol(s), MalType::Symbol(bind), catch_body] = &catch[..],
+                            "catch body should contain catch*, symbol, and body"
+                        );
                         if &s[..] != "catch*" {
-                            return Err(MalError::WrongArgs);
+                            error!("catch body does not start with catch*")
                         }
 
                         let res = eval(body, &repl_env);
@@ -259,7 +280,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         (ast, repl_env) = (catch_body.clone(), new_env);
                     }
                     "macroexpand" => {
-                        args!([ast] = tail);
+                        try_let!([ast] = tail, "macroexpand expects 1 argument");
 
                         return macro_expand(ast, &repl_env);
                     }
@@ -282,7 +303,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                 MalType::Closure(closure) => {
                     (ast, repl_env) = closure.apply(tail)?;
                 }
-                _ => return Err(MalError::InvalidHead),
+                _ => error!("{head} is not a function"),
             };
 
             continue 'outer;

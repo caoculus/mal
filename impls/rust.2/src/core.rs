@@ -1,4 +1,4 @@
-use crate::{args, types::MalResult};
+use crate::{error, try_let, types::MalResult};
 use std::{cell::RefCell, iter, rc::Rc};
 
 use itertools::Itertools;
@@ -16,40 +16,43 @@ type MalFnPtr = fn(Args) -> MalRet;
 
 macro_rules! bin_op {
     ($op:tt, $ty:expr) => {
-        move |args: &[MalType]| {
-            $crate::args!(&[MalType::Number(a), MalType::Number(b)] = args);
+        (stringify!($op),
+            move |args: &[MalType]| {
+                $crate::try_let!(&[MalType::Number(a), MalType::Number(b)] = args, "{} expects two numbers", stringify!($op));
 
-            Ok($ty(a $op b))
-        }
+                Ok($ty(a $op b))
+            }
+        )
     };
 }
 
 macro_rules! is {
-    ($pat:pat) => {
-        move |args: &[MalType]| {
-            args!([first] = args);
+    ($name:literal, $pat:pat) => {
+        ($name, move |args: &[MalType]| {
+            $crate::try_let!([first] = args, "{} expects 1 argument", $name);
 
             Ok(MalType::Bool(matches!(first, $pat)))
-        }
+        })
     };
 }
 
 // returns the base environment
 pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
     &[
-        ("+", bin_op!(+, MalType::Number)),
-        ("-", bin_op!(-, MalType::Number)),
-        ("*", bin_op!(*, MalType::Number)),
-        ("/", bin_op!(/, MalType::Number)),
-        ("<", bin_op!(<, MalType::Bool)),
-        ("<=", bin_op!(<=, MalType::Bool)),
-        (">", bin_op!(>, MalType::Bool)),
-        (">=", bin_op!(>=, MalType::Bool)),
-        ("list?", is!(MalType::List(..))),
-        ("nil?", is!(MalType::Nil)),
-        ("true?", is!(MalType::Bool(true))),
-        ("false?", is!(MalType::Bool(false))),
-        ("symbol?", is!(MalType::Symbol(..))),
+        bin_op!(+, MalType::Number),
+        bin_op!(-, MalType::Number),
+        bin_op!(*, MalType::Number),
+        bin_op!(/, MalType::Number),
+        bin_op!(<, MalType::Bool),
+        bin_op!(<=, MalType::Bool),
+        bin_op!(>, MalType::Bool),
+        bin_op!(>=, MalType::Bool),
+        is!("list?", MalType::List(..)),
+        is!("nil?", MalType::Nil),
+        is!("true?", MalType::Bool(true)),
+        is!("false?", MalType::Bool(false)),
+        is!("symbol?", MalType::Symbol(..)),
+        is!("atom?", MalType::Atom(..)),
         ("list", list),
         ("empty?", empty),
         ("count", count),
@@ -61,7 +64,6 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         ("read-string", read_string),
         ("slurp", slurp),
         ("atom", atom),
-        ("atom?", is!(MalType::Atom(..))),
         ("deref", deref),
         ("reset!", reset),
         ("swap!", swap),
@@ -83,7 +85,7 @@ fn list(args: Args) -> MalRet {
 }
 
 fn empty(args: Args) -> MalRet {
-    args!([head] = args);
+    try_let!([head] = args, "empty expects 1 argument");
 
     let res = match head {
         MalType::List(list) | MalType::Vector(list) => list.is_empty(),
@@ -95,20 +97,20 @@ fn empty(args: Args) -> MalRet {
 }
 
 fn count(args: Args) -> MalRet {
-    args!([head] = args);
+    try_let!([head] = args, "count expects 1 argument");
 
     let res = match head {
         MalType::Nil => 0,
         MalType::List(list) | MalType::Vector(list) => list.len(),
         MalType::Hashmap(map) => map.len(),
-        _ => return Err(MalError::WrongArgs),
+        _ => error!("{head} is not nil, a list, a vector, or a hashmap"),
     };
 
     Ok(MalType::Number(res as i64))
 }
 
 fn equal(args: Args) -> MalRet {
-    args!([first, second] = args);
+    try_let!([first, second] = args, "equal expects 2 arguments");
 
     Ok(MalType::Bool(first == second))
 }
@@ -150,13 +152,13 @@ fn print_ln(args: Args) -> MalRet {
 }
 
 fn read_string(args: Args) -> MalRet {
-    args!([MalType::String(s)] = args);
+    try_let!([MalType::String(s)] = args, "read_string expects a string");
 
     read_str(s)
 }
 
 fn slurp(args: Args) -> MalRet {
-    args!([MalType::String(path)] = args);
+    try_let!([MalType::String(path)] = args, "slurp expects a string");
 
     std::fs::read_to_string(path.as_ref())
         .map(|s| MalType::String(s.into()))
@@ -164,19 +166,22 @@ fn slurp(args: Args) -> MalRet {
 }
 
 fn atom(args: Args) -> MalRet {
-    args!([item] = args);
+    try_let!([item] = args, "atom expects 1 argument");
 
     Ok(MalType::Atom(Rc::new(RefCell::new(item.clone()))))
 }
 
 fn deref(args: Args) -> MalRet {
-    args!([MalType::Atom(item)] = args);
+    try_let!([MalType::Atom(item)] = args, "deref expects an atom");
 
     Ok(item.borrow().clone())
 }
 
 fn reset(args: Args) -> MalRet {
-    args!([MalType::Atom(old), new] = args);
+    try_let!(
+        [MalType::Atom(old), new] = args,
+        "reset expects an atom and a new value"
+    );
 
     *old.borrow_mut() = new.clone();
 
@@ -184,7 +189,7 @@ fn reset(args: Args) -> MalRet {
 }
 
 fn swap(args: Args) -> MalRet {
-    args!([MalType::Atom(atom), f @ (MalType::Fn(..) | MalType::Closure(..)), tail @ ..] = args);
+    try_let!([MalType::Atom(atom), f @ (MalType::Fn(..) | MalType::Closure(..)), tail @ ..] = args, "swap expects an atom, a function, and arguments");
 
     // rebind args
     let args: Vec<_> = iter::once(atom.borrow().clone())
@@ -215,7 +220,10 @@ fn swap(args: Args) -> MalRet {
 }
 
 fn cons(args: Args) -> MalRet {
-    args!([elt, MalType::List(list) | MalType::Vector(list)] = args);
+    try_let!(
+        [elt, MalType::List(list) | MalType::Vector(list)] = args,
+        "cons expects an element and a list or vector"
+    );
 
     Ok(MalType::List(
         iter::once(elt.clone())
@@ -247,7 +255,7 @@ pub fn quasiquote(args: Args) -> MalResult<MalType> {
         match ast {
             MalType::List(list) => match &list[..] {
                 [MalType::Symbol(s), tail @ ..] if &s[..] == "unquote" => {
-                    args!([snd] = tail);
+                    try_let!([snd] = tail, "unquote expects 1 argument");
                     Ok(snd.clone())
                 }
                 _ => go_list(list),
@@ -269,7 +277,7 @@ pub fn quasiquote(args: Args) -> MalResult<MalType> {
                 if let MalType::List(list) = elt {
                     match &list[..] {
                         [MalType::Symbol(s), tail @ ..] if &s[..] == "splice-unquote" => {
-                            args!([snd] = tail);
+                            try_let!([snd] = tail, "splice-unquote expects 1 argument");
                             return Ok(MalType::List(
                                 vec![MalType::Symbol("concat".into()), snd.clone(), acc].into(),
                             ));
@@ -284,70 +292,72 @@ pub fn quasiquote(args: Args) -> MalResult<MalType> {
             })
     }
 
-    args!([ast] = args);
+    try_let!([ast] = args, "quasiquote expects 1 argument");
 
     go(ast)
 }
 
 fn vec(args: Args) -> MalRet {
-    args!([MalType::List(list) | MalType::Vector(list)] = args);
+    try_let!(
+        [MalType::List(list) | MalType::Vector(list)] = args,
+        "vec expects a list or vector"
+    );
 
     Ok(MalType::Vector(list.to_vec().into()))
 }
 
 fn nth(args: Args) -> MalRet {
-    args!(
+    try_let!(
         [
             MalType::List(list) | MalType::Vector(list),
-            MalType::Number(i)
-        ] = args
+            MalType::Number(idx)
+        ] = args,
+        "nth expects a list or vector and an index"
     );
 
-    let i: usize = usize::try_from(*i).map_err(|_| MalError::OutOfBounds)?;
-    list.get(i).cloned().ok_or(MalError::OutOfBounds)
+    let i: usize = usize::try_from(*idx).map_err(|_| MalError::OutOfBounds {
+        max: list.len(),
+        found: *idx,
+    })?;
+    list.get(i).cloned().ok_or(MalError::OutOfBounds {
+        max: list.len(),
+        found: *idx,
+    })
 }
 
 fn first(args: Args) -> MalRet {
-    'err: {
-        let [head] = args else { break 'err; };
+    try_let!([head @ (MalType::Nil | MalType::List(..) | MalType::Vector(..))] = args, "first expects nil, a list, or a vector");
 
-        let res = match head {
-            MalType::Nil => MalType::Nil,
-            MalType::List(list) | MalType::Vector(list) => {
-                list.first().cloned().unwrap_or(MalType::Nil)
-            }
-            _ => break 'err,
-        };
+    let res = match head {
+        MalType::Nil => MalType::Nil,
+        MalType::List(list) | MalType::Vector(list) => {
+            list.first().cloned().unwrap_or(MalType::Nil)
+        }
+        _ => unreachable!(),
+    };
 
-        return Ok(res);
-    }
-
-    Err(MalError::WrongArgs)
+    Ok(res)
 }
 
 fn rest(args: Args) -> MalRet {
-    'err: {
-        let [head] = args else { break 'err; };
+    try_let!([head @ (MalType::Nil | MalType::List(..) | MalType::Vector(..))] = args, "rest expects nil, a list, or a vector");
 
-        let res = match head {
-            MalType::Nil => vec![],
-            MalType::List(list) | MalType::Vector(list) => list.iter().skip(1).cloned().collect(),
-            _ => break 'err,
-        };
+    let res = match head {
+        MalType::Nil => vec![],
+        MalType::List(list) | MalType::Vector(list) => list.iter().skip(1).cloned().collect(),
+        _ => unreachable!(),
+    };
 
-        return Ok(MalType::List(res.into()));
-    }
-
-    Err(MalError::WrongArgs)
+    Ok(MalType::List(res.into()))
 }
 
 fn throw(args: Args) -> MalRet {
-    args!([e] = args);
+    try_let!([e] = args, "throw expects 1 argument");
     Err(MalError::Exception(e.clone()))
 }
 
 fn apply(args: Args) -> MalRet {
-    args!([f @ (MalType::Fn(..) | MalType::Closure(..)), mid @ .., MalType::List(list) | MalType::Vector(list)] = args);
+    try_let!([f @ (MalType::Fn(..) | MalType::Closure(..)), mid @ .., MalType::List(list) | MalType::Vector(list)] = args, "apply expects a function, 0 or more arguments, and a list or vector");
 
     let args = mid
         .iter()
@@ -366,7 +376,7 @@ fn apply(args: Args) -> MalRet {
 }
 
 fn map(args: Args) -> MalRet {
-    args!([f @ (MalType::Fn(..) | MalType::Closure(..)), MalType::List(list) | MalType::Vector(list)] = args);
+    try_let!([f @ (MalType::Fn(..) | MalType::Closure(..)), MalType::List(list) | MalType::Vector(list)] = args, "map expects a function and a list or vector");
 
     let new_list = match f {
         MalType::Fn(f) => list
