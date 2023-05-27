@@ -258,9 +258,15 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                     }
                     "try*" => {
                         try_let!(
-                            [body, MalType::List(catch)] = tail,
-                            "try* expects body and catch body"
+                            [body, tail @ ..] = tail,
+                            "try* expects body and optional catch body"
                         );
+
+                        if tail.is_empty() {
+                            return eval(body, &repl_env);
+                        }
+
+                        try_let!([MalType::List(catch)] = tail, "catch body should be a list");
                         try_let!(
                             [MalType::Symbol(s), MalType::Symbol(bind), catch_body] = &catch[..],
                             "catch body should contain catch*, symbol, and body"

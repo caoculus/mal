@@ -27,6 +27,7 @@ fn to_token(s: &str) -> Option<MalResult<Token<'_>>> {
     use Token::*;
 
     let token = match s {
+        "" => return None,
         "[" => Left(Bracket),
         "]" => Right(Bracket),
         "{" => Left(Brace),
@@ -130,7 +131,14 @@ where
             return Err(MalError::Comment);
         }
 
-        self.read_form()
+        let res = self.read_form()?;
+
+        if let Some(token) = self.tokens.peek() {
+            println!("Trailing: {token:?}");
+            return Err(MalError::Trailing);
+        }
+
+        Ok(res)
     }
 
     fn read_form(&mut self) -> MalResult<MalType> {

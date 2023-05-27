@@ -38,6 +38,8 @@ pub enum MalError {
     UnbalancedString,
     #[error("EOF")]
     Eof,
+    #[error("trailing characters")]
+    Trailing,
     #[error("invalid hashmap")]
     InvalidHashmap,
     #[error("")]
