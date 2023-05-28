@@ -15,9 +15,9 @@ pub fn pr_str(data: &MalType, mode: PrintMode) -> String {
         MalType::Number(n) => n.to_string(),
         MalType::String(s) => print_mal_string(s, mode),
         MalType::Symbol(s) => s.to_string(),
-        MalType::List(l) => list_to_string(l.iter().map(|t| pr_str(t, mode)), "(", ")"),
-        MalType::Vector(v) => list_to_string(v.iter().map(|t| pr_str(t, mode)), "[", "]"),
-        MalType::Hashmap(h) => list_to_string(
+        MalType::List(l, ..) => list_to_string(l.iter().map(|t| pr_str(t, mode)), "(", ")"),
+        MalType::Vector(v, ..) => list_to_string(v.iter().map(|t| pr_str(t, mode)), "[", "]"),
+        MalType::Hashmap(h, ..) => list_to_string(
             h.iter()
                 .flat_map(|(k, v)| [print_mal_string(k, mode), pr_str(v, mode)]),
             "{",

@@ -64,7 +64,7 @@ fn base_env() -> Env {
 
 fn eval(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
     match ast {
-        MalType::List(ref list) => {
+        MalType::List(ref list, ..) => {
             // empty list case
             let Some(head) = list.first() else {
                 return Ok(ast);
@@ -95,7 +95,7 @@ fn eval_def(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
 }
 
 fn eval_let(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
-    let [_, MalType::List(bindings) | MalType::Vector(bindings), expr] = list else {
+    let [_, MalType::List(bindings, ..) | MalType::Vector(bindings, ..), expr] = list else {
         return Err(MalError::WrongArgs);
     };
 
@@ -148,7 +148,7 @@ fn eval_do(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
 }
 
 fn eval_fn(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
-    let [_, MalType::List(binds) | MalType::Vector(binds), body] = list else {
+    let [_, MalType::List(binds, ..) | MalType::Vector(binds, ..), body] = list else {
         return Err(MalError::WrongArgs);
     };
 
@@ -165,7 +165,7 @@ fn eval_fn(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
                     return Err(MalError::WrongArgs);
                 }
 
-                let var_list = MalType::List(Rc::new(args[names.len()..].to_vec()));
+                let var_list = MalType::list(args[names.len()..].to_vec());
                 names
                     .iter()
                     .cloned()
@@ -227,7 +227,7 @@ struct Bindings {
 }
 
 fn eval_list(list: &Rc<Vec<MalType>>, repl_env: &Env) -> MalResult<MalType> {
-    let MalType::List(list) = eval_ast(MalType::List(list.clone()), repl_env)? else {
+    let MalType::List(list, ..) = eval_ast(MalType::list(list.clone()), repl_env)? else {
         unreachable!("eval_ast should return a list")
     };
 
@@ -244,29 +244,24 @@ fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
         MalType::Symbol(s) => repl_env
             .get(&s)
             .ok_or_else(|| MalError::NotFound(s.clone())),
-        MalType::List(l) => Ok(MalType::List(Rc::new(
+        MalType::List(l, ..) => Ok(MalType::list(
             l.iter()
                 .cloned()
                 .map(|t| eval(t, repl_env))
                 .collect::<MalResult<Vec<_>>>()?,
-        ))),
-        MalType::Vector(v) => Ok(MalType::Vector(Rc::new(
+        )),
+        MalType::Vector(v, ..) => Ok(MalType::vector(
             v.iter()
                 .cloned()
                 .map(|t| eval(t, repl_env))
                 .collect::<MalResult<Vec<_>>>()?,
-        ))),
-        MalType::Hashmap(h) => Ok(MalType::Hashmap(Rc::new(
+        )),
+        MalType::Hashmap(h, ..) => Ok(MalType::hashmap(
             h.iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .map(|(k, v)| eval(v, repl_env).map(|v| (k, v)))
                 .collect::<MalResult<HashMap<_, _>>>()?,
-        ))),
+        )),
         val => Ok(val),
     }
-}
-
-#[test]
-fn test() {
-    rep("( (fn* (& more) (count more)) 1 2 3)", &base_env()).unwrap();
 }

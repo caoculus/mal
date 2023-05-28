@@ -54,18 +54,18 @@ fn check_cmd_args(repl_env: &Env) -> MalResult<ControlFlow<()>> {
     if let [_, name, argv @ ..] = args.as_slice() {
         repl_env.set(
             "*ARGV*".into(),
-            MalType::List(Rc::new(
+            MalType::list(
                 argv.iter()
                     .map(|a| MalType::String(a.as_str().into()))
-                    .collect(),
-            )),
+                    .collect_vec(),
+            ),
         );
 
         rep(&format!("(load-file \"{name}\")"), repl_env)?;
         return Ok(ControlFlow::Break(()));
     }
 
-    repl_env.set("*ARGV*".into(), MalType::List(vec![].into()));
+    repl_env.set("*ARGV*".into(), MalType::list(vec![]));
     Ok(ControlFlow::Continue(()))
 }
 
@@ -112,7 +112,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
 
     'outer: loop {
         'list: {
-            let (MalType::List(ref list) | MalType::Vector(ref list)) = ast else { break 'list; };
+            let (MalType::List(ref list, ..) | MalType::Vector(ref list, ..)) = ast else { break 'list; };
             let [head, tail @ ..] = &list[..] else { return Ok(ast); };
 
             'quote: {
@@ -156,7 +156,10 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                     }
                     "let*" => {
                         try_let!(
-                            [MalType::List(bindings) | MalType::Vector(bindings), expr] = tail
+                            [
+                                MalType::List(bindings, ..) | MalType::Vector(bindings, ..),
+                                expr
+                            ] = tail
                         );
 
                         if bindings.len() % 2 != 0 {
@@ -202,7 +205,9 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         };
                     }
                     "fn*" => {
-                        try_let!([MalType::List(binds) | MalType::Vector(binds), body] = tail);
+                        try_let!(
+                            [MalType::List(binds, ..) | MalType::Vector(binds, ..), body] = tail
+                        );
 
                         let params = MalParams::new(binds)?;
                         return Ok(MalType::Closure(
@@ -222,7 +227,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                 continue 'outer;
             }
 
-            let MalType::List(list) = eval_ast(MalType::List(list.clone()), &repl_env)? else {
+            let MalType::List(list, ..) = eval_ast(MalType::list(list.clone()), &repl_env)? else {
                 unreachable!("eval_ast should return a list")
             };
 
@@ -258,29 +263,21 @@ fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
         MalType::Symbol(s) => repl_env
             .get(&s)
             .ok_or_else(|| MalError::NotFound(s.clone())),
-        MalType::List(l) => Ok(MalType::List(
+        MalType::List(l, ..) => Ok(MalType::list(
             l.iter()
                 .map(|t| eval(t, repl_env))
-                .collect::<MalResult<Vec<_>>>()?
-                .into(),
+                .collect::<MalResult<Vec<_>>>()?,
         )),
-        MalType::Vector(v) => Ok(MalType::Vector(
+        MalType::Vector(v, ..) => Ok(MalType::vector(
             v.iter()
                 .map(|t| eval(t, repl_env))
-                .collect::<MalResult<Vec<_>>>()?
-                .into(),
+                .collect::<MalResult<Vec<_>>>()?,
         )),
-        MalType::Hashmap(h) => Ok(MalType::Hashmap(
+        MalType::Hashmap(h, ..) => Ok(MalType::hashmap(
             h.iter()
                 .map(|(k, v)| eval(v, repl_env).map(|v| (k.clone(), v)))
-                .collect::<MalResult<HashMap<_, _>>>()?
-                .into(),
+                .collect::<MalResult<HashMap<_, _>>>()?,
         )),
         val => Ok(val),
     }
-}
-
-#[test]
-fn test() {
-    rep("((fn* (q) (quasiquote ((unquote q) (quote (unquote q))))) (quote (fn* (q) (quasiquote ((unquote q) (quote (unquote q)))))))", &base_env()).unwrap();
 }

@@ -23,13 +23,35 @@ pub enum MalType {
     Number(i64),
     String(Rc<str>),
     Symbol(Rc<str>),
-    List(Rc<Vec<MalType>>),
-    Vector(Rc<Vec<MalType>>),
-    Hashmap(Rc<HashMap<Rc<str>, MalType>>),
+    List(Rc<Vec<MalType>>, Rc<MalType>),
+    Vector(Rc<Vec<MalType>>, Rc<MalType>),
+    Hashmap(Rc<HashMap<Rc<str>, MalType>>, Rc<MalType>),
     // NOTE: hard to change to a fn pointer, `eval` function needs this to be a closure still
     Fn(#[derivative(Debug = "ignore")] MalFn),
     Closure(#[derivative(Debug = "ignore")] Rc<MalClosure>),
     Atom(Rc<RefCell<MalType>>),
+}
+
+impl MalType {
+    pub fn list(list: impl Into<Rc<Vec<MalType>>>) -> Self {
+        Self::List(list.into(), Rc::new(Self::Nil))
+    }
+
+    pub fn vector(list: impl Into<Rc<Vec<MalType>>>) -> Self {
+        Self::Vector(list.into(), Rc::new(Self::Nil))
+    }
+
+    pub fn hashmap(map: impl Into<Rc<HashMap<Rc<str>, MalType>>>) -> Self {
+        Self::Hashmap(map.into(), Rc::new(Self::Nil))
+    }
+
+    pub fn string(s: &str) -> Self {
+        Self::String(Rc::from(s))
+    }
+
+    pub fn symbol(s: &str) -> Self {
+        Self::Symbol(Rc::from(s))
+    }
 }
 
 #[derive(Debug, Error)]
@@ -113,6 +135,7 @@ pub struct MalClosure {
     pub outer: Env,
     pub body: MalType,
     pub is_macro: bool,
+    pub meta: Rc<MalType>,
 }
 
 impl MalClosure {
@@ -138,6 +161,7 @@ impl Default for MalClosure {
             outer: Default::default(),
             body: Default::default(),
             is_macro: Default::default(),
+            meta: Default::default(),
         }
     }
 }
@@ -192,7 +216,7 @@ impl MalParams {
                     return Err(MalError::WrongArgs);
                 }
 
-                let var_list = MalType::List(Rc::new(args[names.len()..].to_vec()));
+                let var_list = MalType::list(args[names.len()..].to_vec());
                 Ok(self
                     .names
                     .iter()
@@ -233,8 +257,11 @@ impl PartialEq for MalType {
             (Self::Number(l0), Self::Number(r0)) => l0 == r0,
             (Self::String(l0), Self::String(r0)) => l0 == r0,
             (Self::Symbol(l0), Self::Symbol(r0)) => l0 == r0,
-            (Self::List(l0) | Self::Vector(l0), Self::List(r0) | Self::Vector(r0)) => l0 == r0,
-            (Self::Hashmap(l0), Self::Hashmap(r0)) => l0 == r0,
+            (
+                Self::List(l0, ..) | Self::Vector(l0, ..),
+                Self::List(r0, ..) | Self::Vector(r0, ..),
+            ) => l0 == r0,
+            (Self::Hashmap(l0, ..), Self::Hashmap(r0, ..)) => l0 == r0,
             _ => false,
         }
     }

@@ -158,21 +158,18 @@ where
                         self.tokens.next();
 
                         let tail = self.read_form()?;
-                        return Ok(MalType::List(Rc::new(vec![
-                            MalType::Symbol(symbol.into()),
-                            tail,
-                        ])));
+                        return Ok(MalType::list(vec![MalType::symbol(symbol), tail]));
                     } else if *other == "^" {
                         self.tokens.next();
 
                         let first = self.read_form()?;
                         let second = self.read_form()?;
 
-                        return Ok(MalType::List(Rc::new(vec![
+                        return Ok(MalType::list(vec![
                             MalType::Symbol("with-meta".into()),
                             second,
                             first,
-                        ])));
+                        ]));
                     }
                 }
 
@@ -188,9 +185,9 @@ where
         match pair {
             Pair::Brace => hashmap_pairs(list.into_iter())
                 .collect::<MalResult<HashMap<_, _>>>()
-                .map(|m| MalType::Hashmap(m.into())),
-            Pair::Bracket => Ok(MalType::Vector(Rc::new(list))),
-            Pair::Parenthesis => Ok(MalType::List(Rc::new(list))),
+                .map(MalType::hashmap),
+            Pair::Bracket => Ok(MalType::vector(list)),
+            Pair::Parenthesis => Ok(MalType::list(list)),
         }
     }
 

@@ -60,18 +60,18 @@ fn check_cmd_args(repl_env: &Env) -> MalResult<ControlFlow<()>> {
     if let [_, name, argv @ ..] = args.as_slice() {
         repl_env.set(
             "*ARGV*".into(),
-            MalType::List(Rc::new(
+            MalType::list(
                 argv.iter()
                     .map(|a| MalType::String(a.as_str().into()))
-                    .collect(),
-            )),
+                    .collect_vec(),
+            ),
         );
 
         rep(&format!("(load-file \"{name}\")"), repl_env)?;
         return Ok(ControlFlow::Break(()));
     }
 
-    repl_env.set("*ARGV*".into(), MalType::List(vec![].into()));
+    repl_env.set("*ARGV*".into(), MalType::list(vec![]));
     Ok(ControlFlow::Continue(()))
 }
 
@@ -123,7 +123,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
         ast = macro_expand(&ast, &repl_env)?;
 
         'list: {
-            let (MalType::List(ref list) | MalType::Vector(ref list)) = ast else { break 'list; };
+            let (MalType::List(ref list, ..) | MalType::Vector(ref list, ..)) = ast else { break 'list; };
             let [head, tail @ ..] = &list[..] else { return Ok(ast); };
 
             'quote: {
@@ -196,7 +196,10 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                     }
                     "let*" => {
                         try_let!(
-                            [MalType::List(bindings) | MalType::Vector(bindings), expr] = tail,
+                            [
+                                MalType::List(bindings, ..) | MalType::Vector(bindings, ..),
+                                expr
+                            ] = tail,
                             "let* expects list of bindings and expression"
                         );
 
@@ -246,7 +249,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                     }
                     "fn*" => {
                         try_let!(
-                            [MalType::List(binds) | MalType::Vector(binds), body] = tail,
+                            [MalType::List(binds, ..) | MalType::Vector(binds, ..), body] = tail,
                             "fn* expects binding list and body"
                         );
 
@@ -272,7 +275,10 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                             return eval(body, &repl_env);
                         }
 
-                        try_let!([MalType::List(catch)] = tail, "catch body should be a list");
+                        try_let!(
+                            [MalType::List(catch, ..)] = tail,
+                            "catch body should be a list"
+                        );
                         try_let!(
                             [MalType::Symbol(s), MalType::Symbol(bind), catch_body] = &catch[..],
                             "catch body should contain catch*, symbol, and body"
@@ -302,7 +308,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                 continue 'outer;
             }
 
-            let MalType::List(list) = eval_ast(MalType::List(list.clone()), &repl_env)? else {
+            let MalType::List(list, ..) = eval_ast(MalType::list(list.clone()), &repl_env)? else {
                 unreachable!("eval_ast should return a list")
             };
 
@@ -330,23 +336,20 @@ fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
         MalType::Symbol(s) => repl_env
             .get(&s)
             .ok_or_else(|| MalError::NotFound(s.clone())),
-        MalType::List(l) => Ok(MalType::List(
+        MalType::List(l, ..) => Ok(MalType::list(
             l.iter()
                 .map(|t| eval(t, repl_env))
-                .collect::<MalResult<Vec<_>>>()?
-                .into(),
+                .collect::<MalResult<Vec<_>>>()?,
         )),
-        MalType::Vector(v) => Ok(MalType::Vector(
+        MalType::Vector(v, ..) => Ok(MalType::vector(
             v.iter()
                 .map(|t| eval(t, repl_env))
-                .collect::<MalResult<Vec<_>>>()?
-                .into(),
+                .collect::<MalResult<Vec<_>>>()?,
         )),
-        MalType::Hashmap(h) => Ok(MalType::Hashmap(
+        MalType::Hashmap(h, ..) => Ok(MalType::hashmap(
             h.iter()
                 .map(|(k, v)| eval(v, repl_env).map(|v| (k.clone(), v)))
-                .collect::<MalResult<HashMap<_, _>>>()?
-                .into(),
+                .collect::<MalResult<HashMap<_, _>>>()?,
         )),
         val => Ok(val),
     }
@@ -356,7 +359,7 @@ fn macro_expand(ast: &MalType, env: &Env) -> MalResult<MalType> {
     let mut ast = ast.clone();
 
     loop {
-        let MalType::List(list) = &ast else { break; };
+        let MalType::List(list, ..) = &ast else { break; };
         let [MalType::Symbol(s), tail @ ..] = &list[..] else { break; };
         let Some(MalType::Closure(closure)) = env.get(s) else { break; };
 
@@ -369,9 +372,4 @@ fn macro_expand(ast: &MalType, env: &Env) -> MalResult<MalType> {
     }
 
     Ok(ast)
-}
-
-#[test]
-fn test() {
-    rep("((fn* (q) (quasiquote ((unquote q) (quote (unquote q))))) (quote (fn* (q) (quasiquote ((unquote q) (quote (unquote q)))))))", &base_env()).unwrap();
 }

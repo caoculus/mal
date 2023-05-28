@@ -116,15 +116,15 @@ fn is_keyword_str(s: &str) -> bool {
 }
 
 fn list(args: Args) -> MalRet {
-    Ok(MalType::List(Rc::new(args.to_vec())))
+    Ok(MalType::list(args.to_vec()))
 }
 
 fn empty(args: Args) -> MalRet {
     try_let!([head] = args, "empty expects 1 argument");
 
     let res = match head {
-        MalType::List(list) | MalType::Vector(list) => list.is_empty(),
-        MalType::Hashmap(map) => map.is_empty(),
+        MalType::List(list, ..) | MalType::Vector(list, ..) => list.is_empty(),
+        MalType::Hashmap(map, ..) => map.is_empty(),
         _ => return Err(MalError::WrongArgs),
     };
 
@@ -136,8 +136,8 @@ fn count(args: Args) -> MalRet {
 
     let res = match head {
         MalType::Nil => 0,
-        MalType::List(list) | MalType::Vector(list) => list.len(),
-        MalType::Hashmap(map) => map.len(),
+        MalType::List(list, ..) | MalType::Vector(list, ..) => list.len(),
+        MalType::Hashmap(map, ..) => map.len(),
         _ => error!("{head} is not nil, a list, a vector, or a hashmap"),
     };
 
@@ -256,15 +256,14 @@ fn swap(args: Args) -> MalRet {
 
 fn cons(args: Args) -> MalRet {
     try_let!(
-        [elt, MalType::List(list) | MalType::Vector(list)] = args,
+        [elt, MalType::List(list, ..) | MalType::Vector(list, ..)] = args,
         "cons expects an element and a list or vector"
     );
 
-    Ok(MalType::List(
+    Ok(MalType::list(
         iter::once(elt.clone())
             .chain(list.iter().cloned())
-            .collect_vec()
-            .into(),
+            .collect_vec(),
     ))
 }
 
@@ -272,35 +271,34 @@ fn concat(args: Args) -> MalRet {
     let elts = args
         .iter()
         .map(|elt| match elt {
-            MalType::List(list) | MalType::Vector(list) => Ok(list),
+            MalType::List(list, ..) | MalType::Vector(list, ..) => Ok(list),
             _ => Err(MalError::WrongArgs),
         })
         .collect::<MalResult<Vec<_>>>()?;
 
-    Ok(MalType::List(
+    Ok(MalType::list(
         elts.iter()
             .flat_map(|list| list.iter().cloned())
-            .collect_vec()
-            .into(),
+            .collect_vec(),
     ))
 }
 
 pub fn quasiquote(args: Args) -> MalResult<MalType> {
     fn go(ast: &MalType) -> MalResult<MalType> {
         match ast {
-            MalType::List(list) => match &list[..] {
+            MalType::List(list, ..) => match &list[..] {
                 [MalType::Symbol(s), tail @ ..] if &s[..] == "unquote" => {
                     try_let!([snd] = tail, "unquote expects 1 argument");
                     Ok(snd.clone())
                 }
                 _ => go_list(list),
             },
-            MalType::Hashmap(..) | MalType::Symbol(..) => Ok(MalType::List(
-                vec![MalType::Symbol("quote".into()), ast.clone()].into(),
-            )),
-            MalType::Vector(list) => Ok(MalType::List(
-                vec![MalType::Symbol("vec".into()), go_list(list)?].into(),
-            )),
+            MalType::Hashmap(..) | MalType::Symbol(..) => {
+                Ok(MalType::list(vec![MalType::symbol("quote"), ast.clone()]))
+            }
+            MalType::Vector(list, ..) => {
+                Ok(MalType::list(vec![MalType::symbol("vec"), go_list(list)?]))
+            }
             _ => Ok(ast.clone()),
         }
     }
@@ -308,22 +306,22 @@ pub fn quasiquote(args: Args) -> MalResult<MalType> {
     fn go_list(list: &[MalType]) -> MalResult<MalType> {
         list.iter()
             .rev()
-            .try_fold(MalType::List(vec![].into()), |acc, elt| {
-                if let MalType::List(list) = elt {
+            .try_fold(MalType::list(vec![]), |acc, elt| {
+                if let MalType::List(list, ..) = elt {
                     match &list[..] {
                         [MalType::Symbol(s), tail @ ..] if &s[..] == "splice-unquote" => {
                             try_let!([snd] = tail, "splice-unquote expects 1 argument");
-                            return Ok(MalType::List(
-                                vec![MalType::Symbol("concat".into()), snd.clone(), acc].into(),
-                            ));
+                            return Ok(MalType::list(vec![
+                                MalType::Symbol("concat".into()),
+                                snd.clone(),
+                                acc,
+                            ]));
                         }
                         _ => {}
                     }
                 }
 
-                Ok(MalType::List(
-                    vec![MalType::Symbol("cons".into()), go(elt)?, acc].into(),
-                ))
+                Ok(MalType::list(vec![MalType::symbol("cons"), go(elt)?, acc]))
             })
     }
 
@@ -334,17 +332,17 @@ pub fn quasiquote(args: Args) -> MalResult<MalType> {
 
 fn vec(args: Args) -> MalRet {
     try_let!(
-        [MalType::List(list) | MalType::Vector(list)] = args,
+        [MalType::List(list, ..) | MalType::Vector(list, ..)] = args,
         "vec expects a list or vector"
     );
 
-    Ok(MalType::Vector(list.to_vec().into()))
+    Ok(MalType::vector(list.to_vec()))
 }
 
 fn nth(args: Args) -> MalRet {
     try_let!(
         [
-            MalType::List(list) | MalType::Vector(list),
+            MalType::List(list, ..) | MalType::Vector(list, ..),
             MalType::Number(idx)
         ] = args,
         "nth expects a list or vector and an index"
@@ -365,7 +363,7 @@ fn first(args: Args) -> MalRet {
 
     let res = match head {
         MalType::Nil => MalType::Nil,
-        MalType::List(list) | MalType::Vector(list) => {
+        MalType::List(list, ..) | MalType::Vector(list, ..) => {
             list.first().cloned().unwrap_or(MalType::Nil)
         }
         _ => unreachable!(),
@@ -379,11 +377,13 @@ fn rest(args: Args) -> MalRet {
 
     let res = match head {
         MalType::Nil => vec![],
-        MalType::List(list) | MalType::Vector(list) => list.iter().skip(1).cloned().collect(),
+        MalType::List(list, ..) | MalType::Vector(list, ..) => {
+            list.iter().skip(1).cloned().collect()
+        }
         _ => unreachable!(),
     };
 
-    Ok(MalType::List(res.into()))
+    Ok(MalType::list(res))
 }
 
 fn throw(args: Args) -> MalRet {
@@ -392,7 +392,7 @@ fn throw(args: Args) -> MalRet {
 }
 
 fn apply(args: Args) -> MalRet {
-    try_let!([f @ (MalType::Fn(..) | MalType::Closure(..)), mid @ .., MalType::List(list) | MalType::Vector(list)] = args, "apply expects a function, 0 or more arguments, and a list or vector");
+    try_let!([f @ (MalType::Fn(..) | MalType::Closure(..)), mid @ .., MalType::List(list, ..) | MalType::Vector(list, ..)] = args, "apply expects a function, 0 or more arguments, and a list or vector");
 
     let args = mid
         .iter()
@@ -411,7 +411,7 @@ fn apply(args: Args) -> MalRet {
 }
 
 fn map(args: Args) -> MalRet {
-    try_let!([f @ (MalType::Fn(..) | MalType::Closure(..)), MalType::List(list) | MalType::Vector(list)] = args, "map expects a function and a list or vector");
+    try_let!([f @ (MalType::Fn(..) | MalType::Closure(..)), MalType::List(list, ..) | MalType::Vector(list, ..)] = args, "map expects a function and a list or vector");
 
     let new_list = match f {
         MalType::Fn(f) => list
@@ -428,7 +428,7 @@ fn map(args: Args) -> MalRet {
         _ => unreachable!(),
     };
 
-    Ok(MalType::List(new_list.into()))
+    Ok(MalType::list(new_list))
 }
 
 fn symbol(args: Args) -> MalRet {
@@ -457,18 +457,18 @@ fn keyword(args: Args) -> MalRet {
 }
 
 fn vector(args: Args) -> MalRet {
-    Ok(MalType::Vector(args.to_vec().into()))
+    Ok(MalType::vector(args.to_vec()))
 }
 
 fn hashmap(args: Args) -> MalRet {
     hashmap_pairs(args.iter().cloned())
         .collect::<MalResult<HashMap<_, _>>>()
-        .map(|m| MalType::Hashmap(m.into()))
+        .map(MalType::hashmap)
 }
 
 fn assoc(args: Args) -> MalRet {
     try_let!(
-        [MalType::Hashmap(map), tail @ ..] = args,
+        [MalType::Hashmap(map, ..), tail @ ..] = args,
         "assoc expects a hashmap and arguments"
     );
 
@@ -479,12 +479,12 @@ fn assoc(args: Args) -> MalRet {
         new_map.insert(k, v);
     }
 
-    Ok(MalType::Hashmap(new_map.into()))
+    Ok(MalType::hashmap(new_map))
 }
 
 fn dissoc(args: Args) -> MalRet {
     try_let!(
-        [MalType::Hashmap(map), tail @ ..] = args,
+        [MalType::Hashmap(map, ..), tail @ ..] = args,
         "dissoc expects a hashmap and a arguments"
     );
 
@@ -497,7 +497,7 @@ fn dissoc(args: Args) -> MalRet {
         new_map.remove(s);
     }
 
-    Ok(MalType::Hashmap(new_map.into()))
+    Ok(MalType::hashmap(new_map))
 }
 
 fn get(args: Args) -> MalRet {
@@ -509,7 +509,7 @@ fn get(args: Args) -> MalRet {
     );
 
     let res = match map {
-        MalType::Hashmap(map) => map.get(key).cloned().unwrap_or(MalType::Nil),
+        MalType::Hashmap(map, ..) => map.get(key).cloned().unwrap_or(MalType::Nil),
         MalType::Nil => MalType::Nil,
         _ => unreachable!(),
     };
@@ -519,7 +519,7 @@ fn get(args: Args) -> MalRet {
 
 fn contains(args: Args) -> MalRet {
     try_let!(
-        [MalType::Hashmap(map), MalType::String(key)] = args,
+        [MalType::Hashmap(map, ..), MalType::String(key)] = args,
         "contains? expects hashmap and string key"
     );
 
@@ -527,19 +527,15 @@ fn contains(args: Args) -> MalRet {
 }
 
 fn keys(args: Args) -> MalRet {
-    try_let!([MalType::Hashmap(map)] = args, "keys expects a hashmap");
-    Ok(MalType::List(
-        map.keys()
-            .cloned()
-            .map(MalType::String)
-            .collect_vec()
-            .into(),
+    try_let!([MalType::Hashmap(map, ..)] = args, "keys expects a hashmap");
+    Ok(MalType::list(
+        map.keys().cloned().map(MalType::String).collect_vec(),
     ))
 }
 
 fn vals(args: Args) -> MalRet {
-    try_let!([MalType::Hashmap(map)] = args, "vals expects a hashmap");
-    Ok(MalType::List(map.values().cloned().collect_vec().into()))
+    try_let!([MalType::Hashmap(map, ..)] = args, "vals expects a hashmap");
+    Ok(MalType::list(map.values().cloned().collect_vec()))
 }
 
 fn readline(args: Args) -> MalRet {

@@ -71,7 +71,7 @@ fn to_mal_fn(f: impl Fn(i64, i64) -> i64 + 'static) -> MalType {
 
 fn eval(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
     match ast {
-        MalType::List(ref list) => {
+        MalType::List(ref list, ..) => {
             // empty list case
             let Some(head) = list.first() else {
                 return Ok(ast);
@@ -89,7 +89,7 @@ fn eval(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                     Ok(value)
                 }
                 MalType::Symbol(s) if s.as_ref() == "let*" => {
-                    let [_, MalType::List(bindings) | MalType::Vector(bindings), expr] = list.as_slice() else {
+                    let [_, MalType::List(bindings, ..) | MalType::Vector(bindings, ..), expr] = list.as_slice() else {
                         return Err(MalError::WrongArgs);
                     };
 
@@ -113,7 +113,7 @@ fn eval(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                 }
                 _ => {
                     // re-evaluate
-                    let MalType::List(list) = eval_ast(MalType::List(list.clone()), repl_env)? else {
+                    let MalType::List(list, ..) = eval_ast(MalType::list(list.clone()), repl_env)? else {
                         unreachable!("eval_ast should return a list")
                     };
 
@@ -134,24 +134,24 @@ fn eval_ast(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
         MalType::Symbol(s) => repl_env
             .get(&s)
             .ok_or_else(|| MalError::NotFound(s.clone())),
-        MalType::List(l) => Ok(MalType::List(Rc::new(
+        MalType::List(l, ..) => Ok(MalType::list(
             l.iter()
                 .cloned()
                 .map(|t| eval(t, repl_env))
                 .collect::<MalResult<Vec<_>>>()?,
-        ))),
-        MalType::Vector(v) => Ok(MalType::Vector(Rc::new(
+        )),
+        MalType::Vector(v, ..) => Ok(MalType::vector(
             v.iter()
                 .cloned()
                 .map(|t| eval(t, repl_env))
                 .collect::<MalResult<Vec<_>>>()?,
-        ))),
-        MalType::Hashmap(h) => Ok(MalType::Hashmap(Rc::new(
+        )),
+        MalType::Hashmap(h, ..) => Ok(MalType::hashmap(
             h.iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .map(|(k, v)| eval(v, repl_env).map(|v| (k, v)))
                 .collect::<MalResult<HashMap<_, _>>>()?,
-        ))),
+        )),
         val => Ok(val),
     }
 }
