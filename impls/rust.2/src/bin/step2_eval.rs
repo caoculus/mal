@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn to_mal_fn(f: impl Fn(i64, i64) -> i64 + 'static) -> MalType {
-    MalType::Fn(Rc::new(move |args| {
+    MalType::func(Rc::new(move |args| {
         let &[MalType::Number(a), MalType::Number(b)] = args else {
             return Err(MalError::WrongArgs);
         };
@@ -75,7 +75,7 @@ fn eval(ast: MalType, repl_env: &HashMap<Rc<str>, MalType>) -> MalResult<MalType
                 unreachable!("eval_ast should return a list")
             };
 
-            let Some(MalType::Fn(f)) = list.first() else {
+            let Some(MalType::Fn(f, ..)) = list.first() else {
                 return Err(MalError::InvalidHead);
             };
 

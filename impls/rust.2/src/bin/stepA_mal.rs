@@ -86,14 +86,14 @@ fn base_env() -> Env {
         None,
         mal::core::ns()
             .iter()
-            .map(|(k, v)| ((*k).into(), MalType::Fn(Rc::new(v))))
+            .map(|(k, v)| ((*k).into(), MalType::func(Rc::new(v))))
             .collect(),
     )
 }
 
 fn define_additional(repl_env: &Env) {
     // eval function
-    repl_env.set("eval".into(), MalType::Fn(eval_fn(repl_env.clone())));
+    repl_env.set("eval".into(), MalType::func(eval_fn(repl_env.clone())));
     // not function
     rep("(def! not (fn* (a) (if a false true)))", repl_env).unwrap();
     // load-file function
@@ -317,7 +317,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
             };
 
             match head {
-                MalType::Fn(f) => return f(tail),
+                MalType::Fn(f, ..) => return f(tail),
                 MalType::Closure(closure) => {
                     (ast, repl_env) = closure.apply(tail)?;
                 }

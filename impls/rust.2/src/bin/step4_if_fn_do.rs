@@ -57,7 +57,7 @@ fn base_env() -> Env {
         None,
         mal::core::ns()
             .iter()
-            .map(|(k, v)| ((*k).into(), MalType::Fn(Rc::new(v))))
+            .map(|(k, v)| ((*k).into(), MalType::func(Rc::new(v))))
             .collect(),
     )
 }
@@ -158,7 +158,7 @@ fn eval_fn(list: &[MalType], repl_env: &Env) -> MalResult<MalType> {
 
     // a lot of cloning happening, because the function can get called
     // multiple times
-    Ok(MalType::Fn(Rc::new(move |args| {
+    Ok(MalType::func(Rc::new(move |args| {
         let binds = match &variadic {
             Some(variadic) => {
                 if args.len() < names.len() {
@@ -234,7 +234,7 @@ fn eval_list(list: &Rc<Vec<MalType>>, repl_env: &Env) -> MalResult<MalType> {
     let head = list.first().expect("list should not be empty");
 
     match head {
-        MalType::Fn(f) => f(&list[1..]),
+        MalType::Fn(f, ..) => f(&list[1..]),
         _ => Err(MalError::InvalidHead),
     }
 }

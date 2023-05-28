@@ -23,7 +23,7 @@ pub fn pr_str(data: &MalType, mode: PrintMode) -> String {
             "{",
             "}",
         ),
-        MalType::Fn(_) | MalType::Closure(_) => "#<function>".into(),
+        MalType::Fn(..) | MalType::Closure(_) => "#<function>".into(),
         MalType::Atom(data) => {
             list_to_string(["atom".into(), pr_str(&data.borrow(), mode)], "(", ")")
         }

@@ -57,7 +57,7 @@ fn base_env() -> Env {
         None,
         mal::core::ns()
             .iter()
-            .map(|(k, v)| ((*k).into(), MalType::Fn(Rc::new(v))))
+            .map(|(k, v)| ((*k).into(), MalType::func(Rc::new(v))))
             .collect(),
     )
 }
@@ -160,7 +160,7 @@ fn eval(ast: &MalType, repl_env: &Env) -> MalResult<MalType> {
                         let args = &list[1..];
 
                         match head {
-                            MalType::Fn(f) => return f(args),
+                            MalType::Fn(f, ..) => return f(args),
                             MalType::Closure(closure) => {
                                 let MalClosure {
                                     params,

@@ -61,9 +61,10 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         is!("vector?", MalType::Vector(..)),
         is!("sequential?", MalType::List(..) | MalType::Vector(..)),
         is!("map?", MalType::Hashmap(..)),
-        is!("fn?", MalType::Fn(..) | MalType::Closure(..)),
-        is!("string?", MalType::String(..)),
         is!("number?", MalType::Number(..)),
+        ("string?", is_string),
+        ("fn?", is_fn),
+        ("macro?", is_macro),
         ("list", list),
         ("empty?", empty),
         ("count", count),
@@ -99,16 +100,12 @@ pub const fn ns() -> &'static [(&'static str, MalFnPtr)] {
         ("keys", keys),
         ("vals", vals),
         ("readline", readline),
-        ("time-ms", unimplemented),
-        ("meta", unimplemented),
-        ("with-meta", unimplemented),
-        ("seq", unimplemented),
-        ("conj", unimplemented),
+        ("time-ms", time_ms),
+        ("meta", meta),
+        ("with-meta", with_meta),
+        ("seq", seq),
+        ("conj", conj),
     ]
-}
-
-fn unimplemented(_args: Args) -> MalRet {
-    error!("unimplemented")
 }
 
 fn is_keyword_str(s: &str) -> bool {
@@ -232,7 +229,7 @@ fn swap(args: Args) -> MalRet {
         .collect();
 
     let res = match f {
-        MalType::Fn(f) => f(&args)?,
+        MalType::Fn(f, ..) => f(&args)?,
         MalType::Closure(closure) => {
             let MalClosure {
                 eval,
@@ -401,7 +398,7 @@ fn apply(args: Args) -> MalRet {
         .collect_vec();
 
     match f {
-        MalType::Fn(f) => f(&args),
+        MalType::Fn(f, ..) => f(&args),
         MalType::Closure(closure) => {
             let (ast, env) = closure.apply(&args)?;
             (closure.eval)(&ast, &env)
@@ -414,7 +411,7 @@ fn map(args: Args) -> MalRet {
     try_let!([f @ (MalType::Fn(..) | MalType::Closure(..)), MalType::List(list, ..) | MalType::Vector(list, ..)] = args, "map expects a function and a list or vector");
 
     let new_list = match f {
-        MalType::Fn(f) => list
+        MalType::Fn(f, ..) => list
             .iter()
             .map(|t| f(&[t.clone()]))
             .collect::<MalResult<Vec<MalType>>>()?,
@@ -555,4 +552,147 @@ fn readline(args: Args) -> MalRet {
     };
 
     Ok(res)
+}
+
+fn is_string(args: Args) -> MalRet {
+    try_let!([head] = args, "string? expects 1 argument");
+
+    Ok(MalType::Bool(
+        matches!(head, MalType::String(s) if !is_keyword_str(s)),
+    ))
+}
+
+fn is_fn(args: Args) -> MalRet {
+    try_let!([head] = args, "fn? expects 1 argument");
+
+    let res = match head {
+        MalType::Fn(..) => true,
+        MalType::Closure(closure) => !closure.is_macro,
+        _ => false,
+    };
+
+    Ok(MalType::Bool(res))
+}
+
+fn is_macro(args: Args) -> MalRet {
+    try_let!([head] = args, "macro? expects 1 argument");
+
+    Ok(MalType::Bool(
+        matches!(head, MalType::Closure(closure) if closure.is_macro),
+    ))
+}
+
+fn meta(args: Args) -> MalRet {
+    'err: {
+        let [head] = args else { break 'err; };
+
+        let res = match head {
+            MalType::List(_, meta) | MalType::Vector(_, meta) | MalType::Hashmap(_, meta) => {
+                (**meta).clone()
+            }
+            MalType::Fn(_, meta) => (**meta).clone(),
+            MalType::Closure(closure) => (*closure.meta).clone(),
+            _ => break 'err,
+        };
+
+        return Ok(res);
+    }
+
+    error!("meta expects a function, list, vector, or hashmap")
+}
+
+fn with_meta(args: Args) -> MalRet {
+    'err: {
+        let [head, meta] = args else { break 'err; };
+
+        let res = match head {
+            MalType::List(list, ..) => MalType::List(list.clone(), meta.clone().into()),
+            MalType::Vector(list, ..) => MalType::Vector(list.clone(), meta.clone().into()),
+            MalType::Hashmap(map, ..) => MalType::Hashmap(map.clone(), meta.clone().into()),
+            MalType::Fn(f, ..) => MalType::Fn(f.clone(), meta.clone().into()),
+            MalType::Closure(closure) => MalType::Closure(
+                MalClosure {
+                    meta: meta.clone().into(),
+                    ..(**closure).clone()
+                }
+                .into(),
+            ),
+            _ => break 'err,
+        };
+
+        return Ok(res);
+    }
+
+    error!("with-meta expects a function, list, vector, or hashmap, followed by metadata")
+}
+
+fn time_ms(args: Args) -> MalRet {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    if !args.is_empty() {
+        error!("time-ms takes no arguments");
+    }
+
+    Ok(MalType::Number(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_millis() as i64,
+    ))
+}
+
+fn conj(args: Args) -> MalRet {
+    'err: {
+        let [head, tail @ ..] = args else { break 'err };
+        if tail.is_empty() {
+            break 'err;
+        }
+
+        let res = match head {
+            MalType::List(list, ..) => {
+                MalType::list(tail.iter().rev().chain(list.iter()).cloned().collect_vec())
+            }
+            MalType::Vector(list, ..) => {
+                MalType::vector(list.iter().chain(tail).cloned().collect_vec())
+            }
+            _ => break 'err,
+        };
+
+        return Ok(res);
+    }
+
+    error!("conj expects a list or a vector, followed by one or more arguments")
+}
+
+fn seq(args: Args) -> MalRet {
+    'err: {
+        let [head] = args else { break 'err };
+
+        let res = match head {
+            MalType::Nil => MalType::Nil,
+            MalType::List(list, ..) | MalType::Vector(list, ..) => {
+                if list.is_empty() {
+                    MalType::Nil
+                } else {
+                    MalType::list(list.clone())
+                }
+            }
+            MalType::String(s) => {
+                if s.is_empty() {
+                    MalType::Nil
+                } else {
+                    MalType::list(
+                        s.chars()
+                            .map(|c| MalType::string(&c.to_string()))
+                            .collect_vec(),
+                    )
+                }
+            }
+            _ => break 'err,
+        };
+
+        return Ok(res);
+    }
+
+    error!("seq expects a list, vector, string, or nil")
 }

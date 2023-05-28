@@ -27,7 +27,7 @@ pub enum MalType {
     Vector(Rc<Vec<MalType>>, Rc<MalType>),
     Hashmap(Rc<HashMap<Rc<str>, MalType>>, Rc<MalType>),
     // NOTE: hard to change to a fn pointer, `eval` function needs this to be a closure still
-    Fn(#[derivative(Debug = "ignore")] MalFn),
+    Fn(#[derivative(Debug = "ignore")] MalFn, Rc<MalType>),
     Closure(#[derivative(Debug = "ignore")] Rc<MalClosure>),
     Atom(Rc<RefCell<MalType>>),
 }
@@ -51,6 +51,10 @@ impl MalType {
 
     pub fn symbol(s: &str) -> Self {
         Self::Symbol(Rc::from(s))
+    }
+
+    pub fn func(f: MalFn) -> Self {
+        Self::Fn(f, Rc::new(Self::Nil))
     }
 }
 

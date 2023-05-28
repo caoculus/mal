@@ -60,7 +60,7 @@ fn base_env() -> Env {
 }
 
 fn to_mal_fn(f: impl Fn(i64, i64) -> i64 + 'static) -> MalType {
-    MalType::Fn(Rc::new(move |args| {
+    MalType::func(Rc::new(move |args| {
         let &[MalType::Number(a), MalType::Number(b)] = args else {
             return Err(MalError::WrongArgs);
         };
@@ -117,7 +117,7 @@ fn eval(ast: MalType, repl_env: &Env) -> MalResult<MalType> {
                         unreachable!("eval_ast should return a list")
                     };
 
-                    let MalType::Fn(f) = list.first().expect("list should not be empty") else {
+                    let MalType::Fn(f, ..) = list.first().expect("list should not be empty") else {
                         return Err(MalError::InvalidHead);
                     };
 
